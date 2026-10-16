@@ -32,12 +32,10 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
 
-    extra: dict = {}
+    # Explicitly enable/disable reasoning for models that support it
     m = model.lower()
-    if OPENROUTER_REASONING and any(x in m for x in ("lightning", "reasoning", "nemotron-3.5")):
-        extra["reasoning"] = {"enabled": True}
-    if extra:
-        kwargs["extra_body"] = extra
+    if any(x in m for x in ("lightning", "reasoning", "nemotron-3.5")):
+        kwargs["extra_body"] = {"reasoning": {"enabled": bool(OPENROUTER_REASONING)}}
 
     last_err = None
     tried = []

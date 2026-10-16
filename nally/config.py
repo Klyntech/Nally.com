@@ -15,7 +15,8 @@ PROVIDER = os.getenv("NALLY_PROVIDER", "openrouter").lower()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 MODEL = os.getenv("NALLY_MODEL", "nvidia/nemotron-3.5-lightning:free")
-OPENROUTER_REASONING = os.getenv("NALLY_OPENROUTER_REASONING", "true").lower() in ("1", "true", "yes")
+# Reasoning off by default (faster). Set NALLY_OPENROUTER_REASONING=true to enable.
+OPENROUTER_REASONING = os.getenv("NALLY_OPENROUTER_REASONING", "false").lower() in ("1", "true", "yes")
 
 # Auth
 ACCESS_TOKEN = os.getenv("NALLY_ACCESS_TOKEN", "")
