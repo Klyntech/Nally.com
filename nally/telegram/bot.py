@@ -29,7 +29,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not _allowed(update.effective_user.id):
         return
     await update.message.reply_text(
-        "Tools: memory, files, shell (workspace).\n"
+        "I can use memory, files, shell, web_search, and fetch.\n"
         "Just chat — I'll use tools when needed."
     )
 
@@ -75,7 +75,6 @@ def build_application() -> Optional[Application]:
         return None
 
     builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
-    # Webhook: no internal updater. Polling: keep default updater.
     if TELEGRAM_MODE == "webhook":
         builder = builder.updater(None)
     app = builder.build()
@@ -87,7 +86,6 @@ def build_application() -> Optional[Application]:
 
 
 async def setup_telegram(application: Application, webhook_url: str | None) -> None:
-    """Initialize PTB application; set webhook if URL given."""
     await application.initialize()
     await application.start()
     if webhook_url:
@@ -104,7 +102,6 @@ async def setup_telegram(application: Application, webhook_url: str | None) -> N
 
 
 async def shutdown_telegram(application: Application) -> None:
-    # NEVER deleteWebhook on shutdown — on Render the old instance exits after
-    # the new one starts and would wipe the webhook the new process just set.
+    # NEVER deleteWebhook on shutdown — Render old instance would wipe new webhook.
     await application.stop()
     await application.shutdown()
