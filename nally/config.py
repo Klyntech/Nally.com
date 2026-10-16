@@ -14,7 +14,8 @@ if _env.exists():
 PROVIDER = os.getenv("NALLY_PROVIDER", "openrouter").lower()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-MODEL = os.getenv("NALLY_MODEL", "nvidia/nemotron-3.5-lightning:free")
+# Fast free default with reliable tool calling (benchmarked Oct 2026)
+MODEL = os.getenv("NALLY_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 # Reasoning off by default (faster). Set NALLY_OPENROUTER_REASONING=true to enable.
 OPENROUTER_REASONING = os.getenv("NALLY_OPENROUTER_REASONING", "false").lower() in ("1", "true", "yes")
 
@@ -44,9 +45,11 @@ TELEGRAM_USER_ID = int(os.getenv("TELEGRAM_USER_ID", "0") or "0")
 TELEGRAM_MODE = os.getenv("TELEGRAM_MODE", "webhook").lower()  # webhook | polling | off
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 
-# Fallback models (OpenRouter)
+# Fallback models (prefer free, then paid)
 FALLBACK_MODELS = [
     MODEL,
+    "liquid/lfm-2.5-2.6b:free",
+    "nvidia/nemotron-3.5-lightning:free",
     "google/gemini-2.5-flash",
     "openai/gpt-4o-mini",
 ]
