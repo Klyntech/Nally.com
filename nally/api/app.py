@@ -33,15 +33,16 @@ async def lifespan(app: FastAPI):
         if _tg_app is not None:
             webhook_url = NALLY_BASE_URL if TELEGRAM_MODE == "webhook" and NALLY_BASE_URL else None
             await setup_telegram(_tg_app, webhook_url)
-            if TELEGRAM_MODE == "polling":
-                # Local dev: long-poll in background (no webhook)
-                await _tg_app.updater.start_polling(drop_pending_updates=True) if _tg_app.updater else None
+            if TELEGRAM_MODE == "polling" and _tg_app.updater is not None:
+                await _tg_app.updater.start_polling(drop_pending_updates=True)
                 logger.info("Telegram polling started")
+            elif TELEGRAM_MODE == "webhook" and not NALLY_BASE_URL:
+                logger.warning("TELEGRAM_MODE=webhook but NALLY_BASE_URL is empty — set public URL")
     yield
     if _tg_app is not None:
         from nally.telegram.bot import shutdown_telegram
 
-        if TELEGRAM_MODE == "polling" and _tg_app.updater:
+        if TELEGRAM_MODE == "polling" and _tg_app.updater is not None:
             await _tg_app.updater.stop()
         await shutdown_telegram(_tg_app)
         _tg_app = None
