@@ -35,6 +35,13 @@ WORKSPACE = Path(os.getenv("NALLY_WORKSPACE", "/tmp/nally-workspace")).resolve()
 
 # Server
 PORT = int(os.getenv("PORT", os.getenv("NALLY_PORT", "10000")))
+NALLY_BASE_URL = os.getenv("NALLY_BASE_URL", "").rstrip("/")
+
+# Telegram
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_USER_ID = int(os.getenv("TELEGRAM_USER_ID", "0") or "0")
+TELEGRAM_MODE = os.getenv("TELEGRAM_MODE", "webhook").lower()  # webhook | polling | off
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 
 # Fallback models (OpenRouter)
 FALLBACK_MODELS = [
