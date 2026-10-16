@@ -18,14 +18,16 @@ MODEL = os.getenv("NALLY_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 OPENROUTER_REASONING = os.getenv("NALLY_OPENROUTER_REASONING", "false").lower() in ("1", "true", "yes")
 
 # OpenCode Zen (fallback when OpenRouter 429 / unavailable)
+# NOTE: Zen *free* models return FreeTierError outside the OpenCode app.
+# External API needs a funded Zen account + paid model ids (e.g. glm-5.3-flash).
 OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY", "")
 OPENCODE_BASE_URL = os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1")
-OPENCODE_MODEL = os.getenv("OPENCODE_MODEL", "big-pickle")
+OPENCODE_MODEL = os.getenv("OPENCODE_MODEL", "glm-5.3-flash")
 OPENCODE_FALLBACK_MODELS = [
     m.strip()
     for m in os.getenv(
         "OPENCODE_FALLBACK_MODELS",
-        "big-pickle,nemotron-3-super-free,nemotron-3-lightning-free,mimo-free,ling-flash-free",
+        "glm-5.3-flash,deepseek-v4-flash,minimax-m2.5,glm-5.1",
     ).split(",")
     if m.strip()
 ]
