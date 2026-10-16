@@ -7,7 +7,7 @@ from typing import Optional
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from nally.config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID
+from nally.config import TELEGRAM_BOT_TOKEN, TELEGRAM_MODE, TELEGRAM_USER_ID
 from nally.core.logging import logger
 
 
@@ -60,7 +60,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("telegram agent failed")
         reply = f"Error: {e}"
 
-    # Telegram message limit ~4096
     if len(reply) > 4000:
         reply = reply[:4000] + "\n…[truncated]"
 
@@ -74,12 +73,13 @@ def build_application() -> Optional[Application]:
     if not TELEGRAM_BOT_TOKEN:
         logger.warning("TELEGRAM_BOT_TOKEN not set — Telegram disabled")
         return None
-    app = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .updater(None)  # webhook mode: no built-in updater polling
-        .build()
-    )
+
+    builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
+    # Webhook: no internal updater. Polling: keep default updater.
+    if TELEGRAM_MODE == "webhook":
+        builder = builder.updater(None)
+    app = builder.build()
+
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
@@ -97,12 +97,13 @@ async def setup_telegram(application: Application, webhook_url: str | None) -> N
         await application.bot.set_webhook(url=url, drop_pending_updates=True)
         logger.info("Telegram webhook set: %s", url)
     else:
-        logger.info("Telegram app started (no webhook URL — use polling helper or set NALLY_BASE_URL)")
+        logger.info("Telegram app started (mode=%s)", TELEGRAM_MODE)
 
 
 async def shutdown_telegram(application: Application) -> None:
     try:
-        await application.bot.delete_webhook(drop_pending_updates=False)
+        if TELEGRAM_MODE == "webhook":
+            await application.bot.delete_webhook(drop_pending_updates=False)
     except Exception:
         pass
     await application.stop()
