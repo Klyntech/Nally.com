@@ -1,6 +1,7 @@
 """FastAPI app — health, chat, Telegram webhook."""
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -71,6 +72,11 @@ class ChatResponse(BaseModel):
     provider: str
 
 
+@app.get("/")
+def root():
+    return {"ok": True, "service": "nally.com", "health": "/health"}
+
+
 @app.get("/health")
 def health():
     return {
@@ -99,11 +105,24 @@ def chat(body: ChatRequest, _auth=Depends(require_auth)):
 async def telegram_webhook(request: Request):
     if _tg_app is None:
         raise HTTPException(503, "Telegram not configured")
+
+    # Only enforce secret when Telegram actually sends the header.
+    # If TELEGRAM_WEBHOOK_SECRET is set in env but setWebhook was called without
+    # secret_token, Telegram won't send the header — rejecting would 403 forever.
     if TELEGRAM_WEBHOOK_SECRET:
         secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if secret != TELEGRAM_WEBHOOK_SECRET:
+        if secret and secret != TELEGRAM_WEBHOOK_SECRET:
             raise HTTPException(403, "Bad webhook secret")
+
     data = await request.json()
     update = Update.de_json(data, _tg_app.bot)
-    await _tg_app.process_update(update)
+
+    # ACK immediately; process in background so Telegram doesn't time out / retry.
+    async def _process():
+        try:
+            await _tg_app.process_update(update)
+        except Exception:
+            logger.exception("telegram process_update failed")
+
+    asyncio.create_task(_process())
     return {"ok": True}
