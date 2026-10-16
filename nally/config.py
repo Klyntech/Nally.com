@@ -10,14 +10,25 @@ _env = Path(__file__).resolve().parent.parent / ".env"
 if _env.exists():
     load_dotenv(_env, override=True)
 
-# Provider
+# Provider (primary)
 PROVIDER = os.getenv("NALLY_PROVIDER", "openrouter").lower()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-# Fast free default with reliable tool calling (benchmarked Oct 2026)
 MODEL = os.getenv("NALLY_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
-# Reasoning off by default (faster). Set NALLY_OPENROUTER_REASONING=true to enable.
 OPENROUTER_REASONING = os.getenv("NALLY_OPENROUTER_REASONING", "false").lower() in ("1", "true", "yes")
+
+# OpenCode Zen (fallback when OpenRouter 429 / unavailable)
+OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY", "")
+OPENCODE_BASE_URL = os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1")
+OPENCODE_MODEL = os.getenv("OPENCODE_MODEL", "big-pickle")
+OPENCODE_FALLBACK_MODELS = [
+    m.strip()
+    for m in os.getenv(
+        "OPENCODE_FALLBACK_MODELS",
+        "big-pickle,nemotron-3-super-free,nemotron-3-lightning-free,mimo-free,ling-flash-free",
+    ).split(",")
+    if m.strip()
+]
 
 # Auth
 ACCESS_TOKEN = os.getenv("NALLY_ACCESS_TOKEN", "")
@@ -42,10 +53,10 @@ NALLY_BASE_URL = os.getenv("NALLY_BASE_URL", "").rstrip("/")
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_USER_ID = int(os.getenv("TELEGRAM_USER_ID", "0") or "0")
-TELEGRAM_MODE = os.getenv("TELEGRAM_MODE", "webhook").lower()  # webhook | polling | off
+TELEGRAM_MODE = os.getenv("TELEGRAM_MODE", "webhook").lower()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 
-# Fallback models (prefer free, then paid)
+# OpenRouter model fallbacks (same provider)
 FALLBACK_MODELS = [
     MODEL,
     "liquid/lfm-2.5-2.6b:free",
