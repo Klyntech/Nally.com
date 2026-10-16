@@ -7,7 +7,7 @@ from typing import Optional
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from nally.config import TELEGRAM_BOT_TOKEN, TELEGRAM_MODE, TELEGRAM_USER_ID
+from nally.config import TELEGRAM_BOT_TOKEN, TELEGRAM_MODE, TELEGRAM_USER_ID, TELEGRAM_WEBHOOK_SECRET
 from nally.core.logging import logger
 
 
@@ -94,17 +94,17 @@ async def setup_telegram(application: Application, webhook_url: str | None) -> N
         url = webhook_url.rstrip("/")
         if not url.endswith("/telegram/webhook"):
             url = f"{url}/telegram/webhook"
-        await application.bot.set_webhook(url=url, drop_pending_updates=True)
+        kwargs = {"url": url, "drop_pending_updates": False}
+        if TELEGRAM_WEBHOOK_SECRET:
+            kwargs["secret_token"] = TELEGRAM_WEBHOOK_SECRET
+        await application.bot.set_webhook(**kwargs)
         logger.info("Telegram webhook set: %s", url)
     else:
         logger.info("Telegram app started (mode=%s)", TELEGRAM_MODE)
 
 
 async def shutdown_telegram(application: Application) -> None:
-    try:
-        if TELEGRAM_MODE == "webhook":
-            await application.bot.delete_webhook(drop_pending_updates=False)
-    except Exception:
-        pass
+    # NEVER deleteWebhook on shutdown — on Render the old instance exits after
+    # the new one starts and would wipe the webhook the new process just set.
     await application.stop()
     await application.shutdown()
