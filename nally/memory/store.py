@@ -159,21 +159,16 @@ class MemoryStore:
         if not terms:
             return []
 
-        conditions = " OR ".join(
-            "(user_message ILIKE %s OR assistant_message ILIKE %s)" for _ in terms
-        )
-        parameters: list[str | int] = [session_id]
-        for term in terms:
-            pattern = f"%{term}%"
-            parameters.extend((pattern, pattern))
-        parameters.append(max(1, min(limit, 20)))
+        patterns = [f"%{term}%" for term in terms]
+        parameters = (session_id, patterns, patterns, max(1, min(limit, 20)))
 
         with self._conn() as conn:
             rows = conn.execute(
-                f"""
+                """
                 SELECT user_message, assistant_message
                 FROM nally_conversation_turns
-                WHERE session_id = %s AND ({conditions})
+                WHERE session_id = %s
+                  AND (user_message ILIKE ANY(%s) OR assistant_message ILIKE ANY(%s))
                 ORDER BY id DESC
                 LIMIT %s
                 """,
