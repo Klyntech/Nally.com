@@ -17,7 +17,7 @@ OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/ap
 MODEL = os.getenv("NALLY_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 OPENROUTER_REASONING = os.getenv("NALLY_OPENROUTER_REASONING", "false").lower() in ("1", "true", "yes")
 
-# OpenCode Zen (fallback when OpenRouter 429 / unavailable)
+# OpenCode Zen (fallback after OpenRouter fails)
 # NOTE: Zen *free* models return FreeTierError outside the OpenCode app.
 # External API needs a funded Zen account + paid model ids (e.g. glm-5.3-flash).
 OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY", "")
@@ -31,6 +31,11 @@ OPENCODE_FALLBACK_MODELS = [
     ).split(",")
     if m.strip()
 ]
+
+# NVIDIA NIM (last-resort fallback after OpenRouter and OpenCode Zen)
+NVIDIA_NIM_API_KEY = os.getenv("NVIDIA_NIM_API_KEY", "")
+NVIDIA_NIM_BASE_URL = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+NVIDIA_NIM_MODEL = os.getenv("NVIDIA_NIM_MODEL", "deepseek-ai/deepseek-v4-flash")
 
 # Auth
 ACCESS_TOKEN = os.getenv("NALLY_ACCESS_TOKEN", "")
