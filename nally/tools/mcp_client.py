@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 import time
 from typing import Any, Literal
 
@@ -114,6 +115,32 @@ def _args_model(server_name: str, tool_name: str, schema: dict[str, Any]) -> typ
     return create_model(model_name, **fields)
 
 
+def _run_async(coroutine: Any, timeout: float) -> Any:
+    """Run an async MCP operation from sync agent code, including inside an event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(asyncio.wait_for(coroutine, timeout=timeout))
+
+    result: list[Any] = []
+    failure: list[BaseException] = []
+
+    def runner() -> None:
+        try:
+            result.append(asyncio.run(asyncio.wait_for(coroutine, timeout=timeout)))
+        except BaseException as exc:
+            failure.append(exc)
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join(timeout + 1)
+    if thread.is_alive():
+        raise TimeoutError("MCP operation exceeded its timeout")
+    if failure:
+        raise failure[0]
+    return result[0] if result else None
+
+
 def _serialize_result(result: Any) -> str:
     if getattr(result, "isError", False):
         raise RuntimeError("MCP tool returned an error")
@@ -185,11 +212,9 @@ class MCPTool:
 
     def invoke(self, arguments: dict[str, Any]) -> str:
         try:
-            return asyncio.run(
-                asyncio.wait_for(
-                    _connected_call(self.server_config, self.remote_name, arguments),
-                    timeout=self.server_config.timeout_seconds,
-                )
+            return _run_async(
+                _connected_call(self.server_config, self.remote_name, arguments),
+                timeout=self.server_config.timeout_seconds,
             )
         except TimeoutError as exc:
             raise RuntimeError(
@@ -263,7 +288,7 @@ def get_mcp_tools(*, refresh: bool = False) -> list[MCPTool]:
         if not config.enabled or not config.allowed_tools:
             continue
         try:
-            discovered.extend(asyncio.run(_discover_server(config)))
+            discovered.extend(_run_async(_discover_server(config), timeout=config.timeout_seconds))
         except Exception as exc:
             logger.warning(
                 "MCP discovery failed server=%s error=%s",
