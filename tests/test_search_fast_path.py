@@ -26,6 +26,9 @@ def test_direct_search_query_extracts_explicit_queries(message, expected):
         "Can you help me understand admissions?",
         "I searched the web yesterday",
         "Search",
+        "Search for",
+        "Search the web for",
+        "Please search for",
     ],
 )
 def test_direct_search_query_does_not_capture_normal_chat(message):
