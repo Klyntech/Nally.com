@@ -8,6 +8,10 @@ Greenfield personal AI assistant.
 - **Tools:** `memory_*`, `run_command`, `file_*`
 - **Telegram:** webhook (Render) or polling (local)
 
+## Web search
+
+`web_search` tries providers in this order: Tavily, Brave Search, then DuckDuckGo. Set `TAVILY_API_KEY` and `BRAVE_SEARCH_API_KEY` in `.env`; DuckDuckGo is used without a key when both API providers are unavailable or return no usable results. The `fetch` tool remains separate and retrieves a selected URL.
+
 ## Quick start
 
 ```bash
