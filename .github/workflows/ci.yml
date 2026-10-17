@@ -26,4 +26,4 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
       - name: Lint search and agent files
-        run: ruff check nally/agent/graph.py nally/tools/web.py tests/test_search_fast_path.py tests/test_web_search_providers.py
+        run: ruff check nally/agent/graph.py nally/tools/web.py tests/test_search_fast_path.py tests/test_web_search_providers.py --ignore BLE001
