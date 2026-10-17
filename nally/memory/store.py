@@ -1,6 +1,9 @@
 """Postgres-backed key/value memory for facts."""
 from __future__ import annotations
 
+import re
+from typing import TypedDict
+
 from nally.config import DATABASE_URL
 from nally.core.logging import logger
 
@@ -15,7 +18,30 @@ CREATE TABLE IF NOT EXISTS nally_memory (
     UNIQUE(session_id, key)
 );
 CREATE INDEX IF NOT EXISTS idx_nally_memory_session ON nally_memory(session_id);
+
+CREATE TABLE IF NOT EXISTS nally_conversation_turns (
+    id BIGSERIAL PRIMARY KEY,
+    session_id TEXT NOT NULL DEFAULT 'default',
+    user_message TEXT NOT NULL,
+    assistant_message TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_nally_conversation_session_id
+    ON nally_conversation_turns (session_id, id DESC);
 """
+
+
+class ConversationTurn(TypedDict):
+    user: str
+    assistant: str
+
+
+def _redact_sensitive_assignments(value: str) -> str:
+    """Remove values assigned to common sensitive-field names before auto-saving chat."""
+    pattern = re.compile(
+        r"(?i)\b(password|passwd|token|secret|api[_-]?key)\s*[:=]\s*[^\s,;]+"
+    )
+    return pattern.sub(lambda match: f"{match.group(1)}=[REDACTED]", value)
 
 
 class MemoryStore:
@@ -81,3 +107,72 @@ class MemoryStore:
             conn.commit()
             n = cur.rowcount
         return f"Forgot: {key}" if n else f"Nothing to forget for key: {key}"
+
+    def save_turn(self, user_message: str, assistant_message: str, session_id: str = "default") -> str:
+        """Persist one complete user/assistant exchange."""
+        user_text = _redact_sensitive_assignments(user_message.strip())
+        assistant_text = _redact_sensitive_assignments(assistant_message.strip())
+        if not user_text:
+            return "Skipped empty conversation turn."
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO nally_conversation_turns
+                    (session_id, user_message, assistant_message)
+                VALUES (%s, %s, %s)
+                """,
+                (session_id, user_text, assistant_text),
+            )
+            conn.commit()
+        return "Conversation turn saved."
+
+    def recall_recent_turns(self, session_id: str = "default", limit: int = 10) -> list[ConversationTurn]:
+        """Return the most recent exchanges in chronological order."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_message, assistant_message
+                FROM nally_conversation_turns
+                WHERE session_id = %s
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (session_id, max(1, min(limit, 50))),
+            ).fetchall()
+        rows.reverse()
+        return [{"user": user_text, "assistant": assistant_text} for user_text, assistant_text in rows]
+
+    def search_turns(self, query: str, session_id: str = "default", limit: int = 5) -> list[ConversationTurn]:
+        """Find older turns matching meaningful words in the current question."""
+        stopwords = {
+            "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+            "did", "does", "doing", "say", "said", "tell", "told", "remember", "recall",
+            "about", "that", "this", "with", "from", "have", "has", "had", "was", "were",
+            "are", "the", "and", "for", "you", "your", "yours", "me", "my", "mine", "our",
+            "ours", "is", "it", "in", "on", "at", "to", "of", "do", "i", "we", "they",
+            "he", "she", "them", "their", "there", "here",
+        }
+        terms = [
+            term for term in dict.fromkeys(re.findall(r"[A-Za-z0-9]{3,}", query.lower()))
+            if term not in stopwords
+        ][:6]
+        if not terms:
+            return []
+
+        patterns = [f"%{term}%" for term in terms]
+        parameters = (session_id, patterns, patterns, max(1, min(limit, 20)))
+
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_message, assistant_message
+                FROM nally_conversation_turns
+                WHERE session_id = %s
+                  AND (user_message ILIKE ANY(%s) OR assistant_message ILIKE ANY(%s))
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                parameters,
+            ).fetchall()
+        rows.reverse()
+        return [{"user": user_text, "assistant": assistant_text} for user_text, assistant_text in rows]
