@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from nally.tools.file_io import file_list, file_read, file_write
 from nally.tools.memory_tools import memory_forget, memory_recall, memory_remember
+from nally.tools.mcp_client import get_mcp_tools
 from nally.tools.shell import run_command
 from nally.tools.web import fetch, web_search
 
@@ -17,6 +18,7 @@ def get_tools():
         file_list,
         web_search,
         fetch,
+        *get_mcp_tools(),
     ]
 
 
