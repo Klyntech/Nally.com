@@ -7,6 +7,7 @@ import pytest
 from nally.tools.mcp_client import (
     MCPTool,
     _tool_allowed_by_policy,
+    _tool_is_allowlisted,
     get_mcp_tools,
     load_server_configs,
     reset_mcp_tool_cache,
@@ -177,3 +178,25 @@ def test_tool_invocation_rechecks_policy() -> None:
     tool = MCPTool(config, metadata)
     with pytest.raises(PermissionError, match="blocks tool"):
         tool.invoke({})
+
+
+
+def test_wildcard_is_only_allowed_with_restrictive_policies() -> None:
+    github = load_server_configs(
+        '[{"name":"github","transport":"streamable_http","url":"https://example.test/mcp",'
+        '"policy":"github_no_delete","allowed_tools":["*"]}]'
+    )[0]
+    neon = load_server_configs(
+        '[{"name":"neon","transport":"streamable_http","url":"https://example.test/mcp",'
+        '"policy":"read_only","allowed_tools":["*"]}]'
+    )[0]
+    unrestricted = load_server_configs(
+        '[{"name":"other","transport":"streamable_http","url":"https://example.test/mcp",'
+        '"policy":"none","allowed_tools":["*"]}]'
+    )[0]
+
+    assert _tool_is_allowlisted(github, "create_issue")
+    assert not _tool_allowed_by_policy(github, "delete_repository")
+    assert _tool_is_allowlisted(neon, "list_projects")
+    assert not _tool_allowed_by_policy(neon, "create_branch")
+    assert not _tool_is_allowlisted(unrestricted, "anything")
