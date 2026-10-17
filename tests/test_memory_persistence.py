@@ -4,6 +4,7 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage
 
 from nally.agent import graph
+from nally.memory.store import _redact_sensitive_assignments
 from nally.tools import memory_tools
 
 
@@ -135,3 +136,12 @@ def test_agent_searches_older_history_for_current_question(monkeypatch) -> None:
     assert "The Sun is Out here in Lagos" in context
     assert "Older conversation turns relevant to the current question" in context
     assert ("search_turns", "What did I say about the Sun", "tg:12345") in store.calls
+
+
+
+def test_automatic_history_redacts_sensitive_assignments() -> None:
+    cleaned = _redact_sensitive_assignments("token=example_value password=another_value")
+
+    assert "example_value" not in cleaned
+    assert "another_value" not in cleaned
+    assert "token=[REDACTED]" in cleaned
