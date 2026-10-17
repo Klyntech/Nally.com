@@ -9,11 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from langchain_core.tools import tool
 
-from nally.config import (
-    BRAVE_SEARCH_API_KEY,
-    MAX_TOOL_OUTPUT,
-    TAVILY_API_KEY,
-)
+from nally.config import BRAVE_SEARCH_API_KEY, MAX_TOOL_OUTPUT, TAVILY_API_KEY
 
 _TIMEOUT = 20.0
 _HEADERS = {
@@ -24,14 +20,14 @@ _LOG = logging.getLogger(__name__)
 
 
 def _strip_html(html: str) -> str:
-    html = re.sub(r"(?is)<(script|style|noscript|svg).*?>.*?</\\1>", " ", html)
+    html = re.sub(r"(?is)<(script|style|noscript|svg).*?>.*?</\1>", " ", html)
     html = re.sub(r"(?is)<!--.*?-->", " ", html)
-    html = re.sub(r"(?is)<br\\s*/?>", "\\n", html)
-    html = re.sub(r"(?is)</p>", "\\n\\n", html)
+    html = re.sub(r"(?is)<br\s*/?>", "\n", html)
+    html = re.sub(r"(?is)</p>", "\n\n", html)
     html = re.sub(r"(?is)<[^>]+>", " ", html)
     text = unescape(html)
-    text = re.sub(r"[ \\t]+", " ", text)
-    text = re.sub(r"\\n{3,}", "\\n\\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
@@ -52,9 +48,11 @@ def _search_tavily(client: httpx.Client, query: str, limit: int) -> list[tuple[s
     response.raise_for_status()
     payload = response.json()
     return [
-        (str(item.get("title") or item.get("url") or "Untitled"),
-         str(item.get("url") or ""),
-         str(item.get("content") or "")[:240])
+        (
+            str(item.get("title") or item.get("url") or "Untitled"),
+            str(item.get("url") or ""),
+            str(item.get("content") or "")[:240],
+        )
         for item in payload.get("results", [])
         if item.get("url")
     ][:limit]
@@ -75,9 +73,11 @@ def _search_brave(client: httpx.Client, query: str, limit: int) -> list[tuple[st
     payload = response.json()
     web_results = payload.get("web", {}).get("results", [])
     return [
-        (str(item.get("title") or item.get("url") or "Untitled"),
-         str(item.get("url") or ""),
-         str(item.get("description") or "")[:240])
+        (
+            str(item.get("title") or item.get("url") or "Untitled"),
+            str(item.get("url") or ""),
+            str(item.get("description") or "")[:240],
+        )
         for item in web_results
         if item.get("url")
     ][:limit]
@@ -122,12 +122,12 @@ def _format_results(results: list[tuple[str, str, str]], query: str) -> str:
         return f"No results for: {query}"
     lines = []
     for index, (title, url, snippet) in enumerate(results, 1):
-        lines.append(f"{index}. {title}\\n   {url}")
+        lines.append(f"{index}. {title}\n   {url}")
         if snippet:
             lines.append(f"   {snippet}")
-    output = "\\n".join(lines)
+    output = "\n".join(lines)
     if len(output) > MAX_TOOL_OUTPUT:
-        output = output[:MAX_TOOL_OUTPUT] + "\\n...[truncated]"
+        output = output[:MAX_TOOL_OUTPUT] + "\n...[truncated]"
     return output
 
 
@@ -199,5 +199,5 @@ def fetch(url: str) -> str:
 
     text = _strip_html(raw) if "html" in content_type or raw.lstrip().startswith("<!") else raw
     if len(text) > MAX_TOOL_OUTPUT:
-        text = text[:MAX_TOOL_OUTPUT] + "\\n...[truncated]"
+        text = text[:MAX_TOOL_OUTPUT] + "\n...[truncated]"
     return text or "(empty page)"
