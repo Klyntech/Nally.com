@@ -16,7 +16,8 @@ Greenfield personal AI assistant.
 
 Nally can consume tools from explicitly configured MCP servers. MCP is opt-in:
 servers are disabled unless `enabled` is true, and a server exposes only the
-tool names listed in `allowed_tools`. Supported transports are local `stdio`
+tool names listed in `allowed_tools`. Provider policies are enforced during
+discovery and again immediately before invocation. Supported transports are local `stdio`
 and remote Streamable HTTP. Each discovery or tool call has a configurable
 timeout (maximum 120 seconds); failed discovery does not stop built-in tools.
 
@@ -28,6 +29,7 @@ Set `NALLY_MCP_SERVERS` to a JSON array in `.env`. Example:
     "name": "docs",
     "transport": "stdio",
     "enabled": true,
+    "policy": "read_only",
     "command": "uvx",
     "args": ["example-mcp-server"],
     "allowed_tools": ["search_docs"],
@@ -44,22 +46,27 @@ committed JSON.
 
 Initial integration targets:
 
-- **GitHub:** `https://api.githubcopilot.com/mcp/`. The current manager supports
-  bearer-token authentication; its hosted OAuth browser flow is not implemented
-  yet. Prefer the provider's read-only endpoint/options while setting up.
+- **GitHub:** `https://api.githubcopilot.com/mcp/`. Use `policy: "github_no_delete"`
+  to allow configured tools except delete/remove/destroy/purge/drop/truncate operations.
+  The current manager supports bearer-token authentication; its hosted OAuth browser
+  flow is not implemented yet.
 - **Render:** `https://mcp.render.com/mcp`. Use a Render API key in the
   Authorization header. Its MCP server includes deployment and environment
   variable changes, so only allowlist the operations you intend Nally to use.
-- **Neon:** `https://mcp.neon.tech/mcp?readonly=true` for a read-only starting
-  point. Use an API key in the Authorization header. Neon OAuth is not yet
-  supported by Nally's manager.
+- **Neon:** `https://mcp.neon.tech/mcp?readonly=true` and `policy: "read_only"`.
+  The local policy only exposes recognized read-oriented tool names and blocks
+  arbitrary SQL execution and mutation tools. Also use an API key in the Authorization
+  header. Neon OAuth is not yet supported by Nally's manager.
 - **Twelve Data:** the hosted `https://mcp.twelvedata.com/mcp` endpoint uses
   OAuth, which Nally's manager does not yet implement. Use Twelve Data's local
   stdio server with `TWELVE_DATA_API_KEY` for now.
 
 Tool names must be explicitly listed in `allowed_tools`; do not use a wildcard
-to expose every provider tool. Start with read-only tools and add write actions
-only after testing and adding approval controls. Treat server commands, URLs,
+to expose every provider tool. `github_no_delete` blocks destructive tool names,
+while `read_only` uses a positive read-tool allow-pattern and blocks SQL execution.
+Unknown names are blocked by `read_only`. The remote server must also be configured
+with least-privilege credentials because local policy cannot control side effects
+hidden behind a misleading tool name. Treat server commands, URLs,
 and headers as trusted administrator configuration.
 
 ## Quick start
