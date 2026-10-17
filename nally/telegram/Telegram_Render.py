@@ -170,23 +170,28 @@ def split_telegram_html(text: str, limit: int = 4000) -> list[str]:
     chunks: list[str] = []
     current = ""
     stack: list[tuple[str, str]] = []
-    tokens = re.findall(r"<[^>]+>|[^<]+", text)
+    tokens = re.findall(r"<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);|\s+|[^<\s&]+|.", text)
     for token in tokens:
-        if token.startswith("</"):
+        is_tag = token.startswith("<")
+        is_closing = token.startswith("</")
+        match = re.match(r"<([a-zA-Z]+)(?:\s|>)", token) if is_tag and not is_closing else None
+        # Split before content/opening tags, while the active tag stack is intact.
+        closing = "".join("</" + name + ">" for name, _ in reversed(stack))
+        if current and not is_closing and len(current) + len(token) + len(closing) > limit:
+            chunks.append(current + closing)
+            current = "".join(opening for _, opening in stack)
+        if is_closing:
+            current += token
             name = token[2:-1].split()[0]
             for i in range(len(stack) - 1, -1, -1):
                 if stack[i][0] == name:
                     stack.pop(i)
                     break
-        elif token.startswith("<"):
-            match = re.match(r"<([a-zA-Z]+)(?:\s|>)", token)
-            if match and match.group(1) in _TelegramHTML.allowed | {"a"}:
-                stack.append((match.group(1), token))
-        closing = "".join("</" + name + ">" for name, _ in reversed(stack))
-        if current and len(current) + len(token) + len(closing) > limit:
-            chunks.append(current + closing)
-            current = "".join(opening for _, opening in stack)
+            continue
+        if match and match.group(1) in _TelegramHTML.allowed | {"a"}:
+            stack.append((match.group(1), token))
         current += token
     if current:
-        chunks.append(current)
+        closing = "".join("</" + name + ">" for name, _ in reversed(stack))
+        chunks.append(current + closing)
     return chunks
