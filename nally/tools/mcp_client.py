@@ -30,6 +30,8 @@ class MCPServerConfig(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     transport: Literal["stdio", "streamable_http"]
     enabled: bool = False
+    # Enforce provider-specific permissions after the explicit tool allowlist.
+    policy: Literal["none", "github_no_delete", "read_only"] = "none"
     allowed_tools: list[str] = Field(default_factory=list)
     timeout_seconds: float = Field(default=_DEFAULT_TIMEOUT, gt=0, le=120)
     command: str | None = None
@@ -94,6 +96,31 @@ def _resolved_env(config: MCPServerConfig) -> dict[str, str]:
         key: _resolve_env_value(value, label=f"server {config.name} environment {key}")
         for key, value in config.env.items()
     }
+
+_DESTRUCTIVE_TOOL_RE = re.compile(
+    r"(?:^|_)(?:delete|remove|destroy|purge|drop|truncate)(?:_|$)", re.IGNORECASE
+)
+_READ_ONLY_TOOL_RE = re.compile(
+    r"^(?:get|list|search|find|fetch|read|describe|inspect|show|query_logs|"
+    r"explain|compare|whoami|health|status|retrieve|lookup)(?:_|$)",
+    re.IGNORECASE,
+)
+
+
+def _tool_allowed_by_policy(config: MCPServerConfig, tool_name: str) -> bool:
+    """Apply a fail-closed policy after the configured explicit allowlist."""
+    normalized = tool_name.lower().replace("-", "_")
+    if config.policy == "none":
+        return True
+    if config.policy == "github_no_delete":
+        return _DESTRUCTIVE_TOOL_RE.search(normalized) is None
+    if config.policy == "read_only":
+        # Arbitrary SQL execution is not read-only just because a caller intends SELECT.
+        if normalized in {"run_sql", "run_sql_transaction", "execute_sql", "query"}:
+            return False
+        return _READ_ONLY_TOOL_RE.match(normalized) is not None
+    return False
+
 
 def _safe_name(value: str) -> str:
     return _NAME_RE.sub("_", value).strip("_") or "tool"
@@ -239,6 +266,10 @@ class MCPTool:
         )
 
     def invoke(self, arguments: dict[str, Any]) -> str:
+        if not _tool_allowed_by_policy(self.server_config, self.remote_name):
+            raise PermissionError(
+                f"MCP policy {self.server_config.policy!r} blocks tool {self.remote_name!r}"
+            )
         try:
             return _run_async(
                 _connected_call(self.server_config, self.remote_name, arguments),
@@ -271,6 +302,8 @@ async def _discover_server(config: MCPServerConfig) -> list[MCPTool]:
             allowed = set(config.allowed_tools)
             for metadata in response.tools:
                 if metadata.name not in allowed:
+                    continue
+                if not _tool_allowed_by_policy(config, metadata.name):
                     continue
                 discovered.append(MCPTool(config, metadata))
             return discovered
