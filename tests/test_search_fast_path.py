@@ -39,6 +39,7 @@ def test_explicit_search_bypasses_agent_graph():
     with (
         patch.object(graph.web_search, "invoke", return_value="1. Example result") as search,
         patch.object(graph, "get_graph", side_effect=AssertionError("LLM graph must not run")),
+        patch.object(graph, "get_memory_store") as memory_store,
     ):
         result = graph.run_agent("Search for ABSU Admission")
 
