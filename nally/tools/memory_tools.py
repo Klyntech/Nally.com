@@ -32,7 +32,7 @@ def memory_session(session_id: str) -> Iterator[None]:
         _ACTIVE_SESSION_ID.reset(token)
 
 
-def _get_store() -> MemoryStore:
+def get_memory_store() -> MemoryStore:
     global _store
     if _store is None:
         _store = MemoryStore()
@@ -46,13 +46,13 @@ def memory_remember(key: str, value: str) -> str:
         return "Error: memory key cannot be empty"
     if not value.strip():
         return "Error: memory value cannot be empty"
-    return _get_store().remember(key.strip(), value.strip(), session_id=_ACTIVE_SESSION_ID.get())
+    return get_memory_store().remember(key.strip(), value.strip(), session_id=_ACTIVE_SESSION_ID.get())
 
 
 @tool
 def memory_recall(key: str = "") -> str:
     """Recall a stored fact by key, or list recent memories for the current conversation's user/session."""
-    return _get_store().recall(
+    return get_memory_store().recall(
         key.strip() or None,
         session_id=_ACTIVE_SESSION_ID.get(),
     )
@@ -63,4 +63,4 @@ def memory_forget(key: str) -> str:
     """Delete a stored fact by key for the current conversation's user/session."""
     if not key.strip():
         return "Error: memory key cannot be empty"
-    return _get_store().forget(key.strip(), session_id=_ACTIVE_SESSION_ID.get())
+    return get_memory_store().forget(key.strip(), session_id=_ACTIVE_SESSION_ID.get())
