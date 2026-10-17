@@ -10,7 +10,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from nally.config import TELEGRAM_BOT_TOKEN, TELEGRAM_MODE, TELEGRAM_USER_ID, TELEGRAM_WEBHOOK_SECRET
 from nally.core.logging import logger
-from nally.telegram.Telegram_Render import render_telegram_html, split_telegram_html
+from nally.telegram.telegram_renderer import render_telegram_html, split_telegram_html
 
 
 def _allowed(user_id: int | None) -> bool:
