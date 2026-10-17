@@ -109,7 +109,6 @@ def _failure_scope(exc: BaseException) -> str:
     return "model"
 
 
-
 def _ses_id() -> str:
     """OpenCode-shaped session id: ses_ + 12 hex + 14 base62."""
     counter = secrets.randbelow(64)
