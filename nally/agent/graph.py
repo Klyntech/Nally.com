@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Annotated, Any, Literal, TypedDict
 
@@ -14,6 +15,7 @@ from nally.agent.prompts import SYSTEM_PROMPT
 from nally.config import MAX_ITERATIONS, MAX_TOOL_CALLS, MAX_WALL_TIME
 from nally.core.logging import logger
 from nally.tools.registry import get_tools, get_tools_by_name
+from nally.tools.web import web_search
 
 
 class AgentState(TypedDict):
@@ -185,8 +187,35 @@ def get_graph():
     return _graph
 
 
+_DIRECT_SEARCH_RE = re.compile(
+    r"^\\s*(?:please\\s+)?(?:search(?:\\s+the\\s+web)?|look\\s+up|find\\s+online)\\s+(?:for\\s+)?(.+?)\\s*[?.!]*\\s*$",
+    re.IGNORECASE,
+)
+
+
+def _direct_search_query(user_text: str) -> str | None:
+    """Recognize explicit, standalone search requests that do not need an LLM."""
+    match = _DIRECT_SEARCH_RE.match(user_text or "")
+    if not match:
+        return None
+    query = match.group(1).strip().strip("\\\"' ")
+    return query or None
+
+
 def run_agent(user_text: str, session_id: str = "default") -> str:
-    """Run one agent turn; returns final assistant text."""
+    """Run one agent turn; explicit search requests bypass the LLM loop."""
+    query = _direct_search_query(user_text)
+    if query:
+        started = time.monotonic()
+        logger.info("direct web search started query=%r max_results=4", query[:160])
+        try:
+            result = web_search.invoke({"query": query, "max_results": 4})
+            logger.info("direct web search finished elapsed=%.2fs", time.monotonic() - started)
+            return str(result)
+        except Exception as exc:
+            logger.exception("direct web search failed")
+            return f"Web search failed: {type(exc).__name__}"
+
     graph = get_graph()
     initial: AgentState = {
         "messages": [
