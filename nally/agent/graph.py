@@ -24,6 +24,7 @@ class AgentState(TypedDict):
     tool_calls: int
     started_at: float
     stop_reason: str
+    session_id: str
 
 
 def _lc_tools_to_openai(tools) -> list[dict]:
@@ -148,7 +149,8 @@ def tools_node(state: AgentState) -> dict:
             outputs.append(ToolMessage(content=f"Error: unknown tool {name}", tool_call_id=tc["id"], name=name))
             continue
         try:
-            with memory_session(state["session_id"]):\n                result = tool.invoke(tc["args"])
+            with memory_session(state["session_id"]):\n                with memory_session(state["session_id"]):
+                result = tool.invoke(tc["args"])
         except Exception as e:
             logger.exception("Tool failed: %s", name)
             result = f"Error: {e}"
@@ -229,11 +231,9 @@ def run_agent(user_text: str, session_id: str = "default") -> str:
         "tool_calls": 0,
         "started_at": time.time(),
         "stop_reason": "",
+        "session_id": stable_session_id,
     }
-    # ContextVar ensures every memory tool call in this graph run uses the
-    # correct session without exposing session IDs as model-controlled arguments.
-    with memory_session(stable_session_id):
-        final = graph.invoke(initial)
+    final = graph.invoke(initial)
 
     for m in reversed(final["messages"]):
         if isinstance(m, AIMessage) and (m.content or "").strip():
