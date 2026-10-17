@@ -279,7 +279,7 @@ async def _discover_server(config: MCPServerConfig) -> list[MCPTool]:
         params = StdioServerParameters(
             command=config.command or "",
             args=config.args,
-            env={**os.environ, **config.env},
+            env={**os.environ, **_resolved_env(config)},
         )
         async with stdio_client(params) as (read_stream, write_stream):
             return await asyncio.wait_for(
@@ -287,7 +287,7 @@ async def _discover_server(config: MCPServerConfig) -> list[MCPTool]:
                 timeout=config.timeout_seconds,
             )
 
-    async with streamablehttp_client(config.url or "", headers=config.headers) as (
+    async with streamablehttp_client(config.url or "", headers=_resolved_headers(config)) as (
         read_stream,
         write_stream,
         _,
