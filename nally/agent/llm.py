@@ -1,4 +1,4 @@
-"""LLM client: OpenRouter primary, OpenCode Zen fallback (with free-tier fingerprint)."""
+"""LLM client: OpenRouter, then OpenCode Zen, then NVIDIA NIM as last resort."""
 from __future__ import annotations
 
 import json
@@ -20,6 +20,9 @@ from nally.config import (
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
     OPENROUTER_REASONING,
+    NVIDIA_NIM_API_KEY,
+    NVIDIA_NIM_BASE_URL,
+    NVIDIA_NIM_MODEL,
 )
 from nally.core.logging import logger
 
@@ -235,8 +238,29 @@ def _call_opencode_zen(model: str, messages: list, tools: list | None):
     return SimpleNamespace(choices=[choice], model=model)
 
 
+def _call_nvidia_nim(messages: list, tools: list | None, model: str | None = None):
+    """Call NVIDIA NIM through its OpenAI-compatible hosted endpoint."""
+    if not NVIDIA_NIM_API_KEY:
+        raise RuntimeError("NVIDIA_NIM_API_KEY not set")
+
+    client = OpenAI(
+        base_url=NVIDIA_NIM_BASE_URL,
+        api_key=NVIDIA_NIM_API_KEY,
+        timeout=60.0,
+    )
+    kwargs: dict = {
+        "model": model or NVIDIA_NIM_MODEL,
+        "messages": messages,
+        "temperature": 0.4,
+        "max_tokens": 4096,
+    }
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
+    return client.chat.completions.create(**kwargs)
+
 def chat_completion(messages: list, tools: list | None = None, model: str | None = None):
-    """Try OpenRouter models, then OpenCode Zen."""
+    """Try OpenRouter, OpenCode Zen, then NVIDIA NIM as the last resort."""
     primary_model = model or MODEL
     last_err: BaseException | None = None
 
@@ -260,32 +284,41 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
     else:
         logger.warning("OPENROUTER_API_KEY not set — skipping OpenRouter")
 
-    # ── 2) OpenCode Zen (headers + stream + required tools) ────
-    if not OPENCODE_API_KEY:
-        raise last_err or RuntimeError(
-            "All LLM providers failed. Set OPENROUTER_API_KEY and/or OPENCODE_API_KEY."
-        )
+    # ── 2) OpenCode Zen ───────────────────────────────────────
+    if OPENCODE_API_KEY:
+        zen_models = [OPENCODE_MODEL] + [m for m in OPENCODE_FALLBACK_MODELS if m != OPENCODE_MODEL]
+        free_defaults = [
+            "big-pickle",
+            "nemotron-3.5-lightning-free",
+            "mimo-v2.6-flash-free",
+            "glm-5.3-flash-free",
+            "deepseek-v4.1-flash-free",
+        ]
+        ordered = []
+        for m in zen_models + free_defaults:
+            if m not in ordered:
+                ordered.append(m)
 
-    zen_models = [OPENCODE_MODEL] + [m for m in OPENCODE_FALLBACK_MODELS if m != OPENCODE_MODEL]
-    free_defaults = [
-        "big-pickle",
-        "nemotron-3.5-lightning-free",
-        "mimo-v2.6-flash-free",
-        "glm-5.3-flash-free",
-        "deepseek-v4.1-flash-free",
-    ]
-    ordered = []
-    for m in zen_models + free_defaults:
-        if m not in ordered:
-            ordered.append(m)
+        for candidate in ordered:
+            try:
+                logger.info("Falling back to OpenCode Zen model: %s", candidate)
+                return _call_opencode_zen(candidate, messages, tools)
+            except Exception as e:
+                last_err = e
+                logger.warning("OpenCode Zen model %s failed: %s", candidate, e)
+                continue
+    else:
+        logger.warning("OPENCODE_API_KEY not set — skipping OpenCode Zen")
 
-    for candidate in ordered:
+    # ── 3) NVIDIA NIM (last resort) ────────────────────────────
+    if NVIDIA_NIM_API_KEY:
         try:
-            logger.info("Falling back to OpenCode Zen model: %s", candidate)
-            return _call_opencode_zen(candidate, messages, tools)
+            logger.warning("Falling back to NVIDIA NIM model: %s", NVIDIA_NIM_MODEL)
+            return _call_nvidia_nim(messages, tools)
         except Exception as e:
             last_err = e
-            logger.warning("OpenCode Zen model %s failed: %s", candidate, e)
-            continue
+            logger.warning("NVIDIA NIM failed: %s", e)
+    else:
+        logger.warning("NVIDIA_NIM_API_KEY not set — skipping NVIDIA NIM")
 
-    raise last_err or RuntimeError("OpenRouter and OpenCode Zen both failed")
+    raise last_err or RuntimeError("All configured LLM providers failed (OpenRouter, OpenCode Zen, NVIDIA NIM)")
