@@ -10,7 +10,7 @@ Greenfield personal AI assistant.
 
 ## Web search
 
-`web_search` tries providers in this order: Tavily, Brave Search, then DuckDuckGo. Set `TAVILY_API_KEY` and `BRAVE_SEARCH_API_KEY` in `.env`; DuckDuckGo is used without a key when both API providers are unavailable or return no usable results. The `fetch` tool remains separate and retrieves a selected URL.
+`web_search` tries providers in this order: Tavily, Brave Search, then DuckDuckGo. Set `TAVILY_API_KEY` and `BRAVE_SEARCH_API_KEY` in `.env`; DuckDuckGo is used without a key when the API providers are unavailable or return no usable results. Each provider request has an 8-second timeout, with a shared 18-second search budget that reduces the timeout for later providers. Explicit standalone requests such as `Search for ...` bypass the LLM round trip. The `fetch` tool remains separate and retrieves a selected URL.
 
 ## Quick start
 
