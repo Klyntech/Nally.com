@@ -6,10 +6,10 @@ import pytest
 
 from nally.tools.mcp_client import (
     MCPTool,
+    _tool_allowed_by_policy,
     get_mcp_tools,
     load_server_configs,
     reset_mcp_tool_cache,
-    _tool_allowed_by_policy,
 )
 
 
