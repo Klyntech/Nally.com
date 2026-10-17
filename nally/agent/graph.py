@@ -199,6 +199,8 @@ def _direct_search_query(user_text: str) -> str | None:
     if not match:
         return None
     query = match.group(1).strip().strip("\"' ")
+    if query.casefold() in {"for", "the web", "the web for"}:
+        return None
     return query or None
 
 
