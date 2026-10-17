@@ -9,6 +9,7 @@ from nally.tools.mcp_client import (
     get_mcp_tools,
     load_server_configs,
     reset_mcp_tool_cache,
+    _tool_allowed_by_policy,
 )
 
 
@@ -115,3 +116,64 @@ def test_missing_environment_placeholder_fails_closed() -> None:
 
     with pytest.raises(ValueError, match="Missing environment variable MCP_MISSING_TOKEN"):
         _resolve_env_value("${MCP_MISSING_TOKEN}", label="test header")
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "expected"),
+    [
+        ("get_repository", True),
+        ("create_issue", True),
+        ("update_pull_request", True),
+        ("delete_file", False),
+        ("delete_repository", False),
+        ("remove_collaborator", False),
+        ("drop_branch", False),
+    ],
+)
+def test_github_no_delete_policy(tool_name: str, expected: bool) -> None:
+    config = load_server_configs(
+        '[{"name":"github","transport":"streamable_http","url":"https://example.test/mcp",'
+        '"policy":"github_no_delete","allowed_tools":["' + tool_name + '"]}]'
+    )[0]
+    assert _tool_allowed_by_policy(config, tool_name) is expected
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "expected"),
+    [
+        ("list_projects", True),
+        ("get_branch", True),
+        ("query_logs", True),
+        ("explain_sql_statement", True),
+        ("run_sql", False),
+        ("run_sql_transaction", False),
+        ("create_branch", False),
+        ("update_function", False),
+        ("delete_project", False),
+        ("deploy_function", False),
+        ("rotate_credential", False),
+        ("execute_sql", False),
+        ("unknown_operation", False),
+    ],
+)
+def test_neon_read_only_policy(tool_name: str, expected: bool) -> None:
+    config = load_server_configs(
+        '[{"name":"neon","transport":"streamable_http","url":"https://example.test/mcp",'
+        '"policy":"read_only","allowed_tools":["' + tool_name + '"]}]'
+    )[0]
+    assert _tool_allowed_by_policy(config, tool_name) is expected
+
+
+def test_tool_invocation_rechecks_policy() -> None:
+    config = load_server_configs(
+        '[{"name":"neon","transport":"streamable_http","url":"https://example.test/mcp",'
+        '"policy":"read_only","allowed_tools":["run_sql"]}]'
+    )[0]
+    metadata = SimpleNamespace(
+        name="run_sql",
+        description="Execute SQL",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    tool = MCPTool(config, metadata)
+    with pytest.raises(PermissionError, match="blocks tool"):
+        tool.invoke({})
