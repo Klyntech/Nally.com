@@ -13,6 +13,9 @@ from openai import OpenAI
 from nally.config import (
     FALLBACK_MODELS,
     MODEL,
+    NVIDIA_NIM_API_KEY,
+    NVIDIA_NIM_BASE_URL,
+    NVIDIA_NIM_MODEL,
     OPENCODE_API_KEY,
     OPENCODE_BASE_URL,
     OPENCODE_FALLBACK_MODELS,
@@ -20,9 +23,6 @@ from nally.config import (
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
     OPENROUTER_REASONING,
-    NVIDIA_NIM_API_KEY,
-    NVIDIA_NIM_BASE_URL,
-    NVIDIA_NIM_MODEL,
 )
 from nally.core.logging import logger
 
@@ -258,6 +258,7 @@ def _call_nvidia_nim(messages: list, tools: list | None, model: str | None = Non
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
     return client.chat.completions.create(**kwargs)
+
 
 def chat_completion(messages: list, tools: list | None = None, model: str | None = None):
     """Try OpenRouter, OpenCode Zen, then NVIDIA NIM as the last resort."""
