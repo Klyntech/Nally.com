@@ -152,7 +152,8 @@ def web_search(query: str, max_results: int = 5) -> str:
         ("DuckDuckGo", _search_duckduckgo),
     )
     failures = []
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, headers=_HEADERS) as client:
+    search_timeout = httpx.Timeout(8.0, connect=3.0)
+    with httpx.Client(timeout=search_timeout, follow_redirects=True, headers=_HEADERS) as client:
         for provider_name, search_fn in providers:
             try:
                 results = search_fn(client, query, limit)
