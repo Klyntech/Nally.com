@@ -69,10 +69,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not chunks:
         chunks = ["(Nally returned an empty response.)"]
 
+    send_parse_mode = ParseMode.HTML
     try:
-        await status.edit_text(chunks[0], parse_mode=ParseMode.HTML)
+        await status.edit_text(chunks[0], parse_mode=send_parse_mode)
     except Exception:
         logger.exception("Telegram HTML rendering/send failed; retrying as plain text")
+        send_parse_mode = None
         plain = str(reply)
         chunks = [plain[i:i + 3900] for i in range(0, len(plain), 3900)] or ["(Nally returned an empty response.)"]
         try:
@@ -80,7 +82,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception:
             await update.message.reply_text(chunks[0])
     for chunk in chunks[1:]:
-        await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(chunk, parse_mode=send_parse_mode)
 
 
 def build_application() -> Optional[Application]:
