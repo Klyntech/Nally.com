@@ -269,6 +269,8 @@ class MCPTool:
         )
 
     def invoke(self, arguments: dict[str, Any]) -> str:
+        if self.remote_name not in self.server_config.allowed_tools:
+            raise PermissionError(f"MCP tool {self.remote_name!r} is not allow-listed")
         if not _tool_allowed_by_policy(self.server_config, self.remote_name):
             raise PermissionError(
                 f"MCP policy {self.server_config.policy!r} blocks tool {self.remote_name!r}"
