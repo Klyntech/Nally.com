@@ -188,7 +188,7 @@ def get_graph():
 
 
 _DIRECT_SEARCH_RE = re.compile(
-    r"^\\s*(?:please\\s+)?(?:search(?:\\s+the\\s+web)?|look\\s+up|find\\s+online)\\s+(?:for\\s+)?(.+?)\\s*[?.!]*\\s*$",
+    r"^\s*(?:please\s+)?(?:search(?:\s+the\s+web)?|look\s+up|find\s+online)\s+(?:for\s+)?(.+?)\s*[?.!]*\s*$",
     re.IGNORECASE,
 )
 
@@ -198,7 +198,7 @@ def _direct_search_query(user_text: str) -> str | None:
     match = _DIRECT_SEARCH_RE.match(user_text or "")
     if not match:
         return None
-    query = match.group(1).strip().strip("\\\"' ")
+    query = match.group(1).strip().strip("\"' ")
     return query or None
 
 
