@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -37,11 +37,12 @@ def test_direct_search_query_does_not_capture_normal_chat(message):
 
 def test_explicit_search_bypasses_agent_graph():
     with (
-        patch.object(graph.web_search, "invoke", return_value="1. Example result") as search,
+        patch.object(graph, "web_search", new=MagicMock()) as search_tool,
         patch.object(graph, "get_graph", side_effect=AssertionError("LLM graph must not run")),
         patch.object(graph, "get_memory_store"),
     ):
+        search_tool.invoke.return_value = "1. Example result"
         result = graph.run_agent("Search for ABSU Admission")
 
     assert result == "1. Example result"
-    search.assert_called_once_with({"query": "ABSU Admission", "max_results": 4})
+    search_tool.invoke.assert_called_once_with({"query": "ABSU Admission", "max_results": 4})
