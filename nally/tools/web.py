@@ -94,7 +94,7 @@ def _search_duckduckgo(client: httpx.Client, query: str, limit: int) -> list[tup
         r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?'
         r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div)',
         html,
-        re.I | re.S,
+        re.IGNORECASE | re.DOTALL,
     ):
         href, title, snippet = match.groups()
         if "uddg=" in href:
@@ -107,7 +107,7 @@ def _search_duckduckgo(client: httpx.Client, query: str, limit: int) -> list[tup
         for match in re.finditer(
             r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
             html,
-            re.I | re.S,
+            re.IGNORECASE | re.DOTALL,
         ):
             href, title = match.groups()
             if "uddg=" in href:
