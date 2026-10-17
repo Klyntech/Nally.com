@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from html import unescape
 from urllib.parse import parse_qs, urlparse
 
@@ -152,9 +153,18 @@ def web_search(query: str, max_results: int = 5) -> str:
         ("DuckDuckGo", _search_duckduckgo),
     )
     failures = []
-    search_timeout = httpx.Timeout(8.0, connect=3.0)
+    per_provider_timeout = 8.0
+    total_timeout = 18.0
+    deadline = time.monotonic() + total_timeout
+    search_timeout = httpx.Timeout(per_provider_timeout, connect=3.0)
     with httpx.Client(timeout=search_timeout, follow_redirects=True, headers=_HEADERS) as client:
         for provider_name, search_fn in providers:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                failures.append("overall search deadline exceeded")
+                break
+            timeout = min(per_provider_timeout, remaining)
+            client.timeout = httpx.Timeout(timeout, connect=min(3.0, timeout))
             try:
                 results = search_fn(client, query, limit)
                 if results:
