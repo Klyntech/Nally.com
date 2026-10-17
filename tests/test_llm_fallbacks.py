@@ -7,17 +7,28 @@ def test_nvidia_nim_is_last_provider_after_openrouter_and_opencode():
     events = []
     response = object()
 
+    def fail_openrouter(*args):
+        raise RuntimeError("OpenRouter down")
+
+    def fail_opencode(*args):
+        events.append("opencode")
+        raise RuntimeError("OpenCode down")
+
+    def fallback_nim(*args):
+        events.append("nim")
+        return response
+
     with (
         patch.object(llm, "MODEL", "primary-model"),
         patch.object(llm, "FALLBACK_MODELS", []),
         patch.object(llm, "_openrouter_client", return_value=object()),
-        patch.object(llm, "_call_openrouter", side_effect=lambda *args: (_ for _ in ()).throw(RuntimeError("OpenRouter down"))),
+        patch.object(llm, "_call_openrouter", side_effect=fail_openrouter),
         patch.object(llm, "OPENCODE_API_KEY", "zen-key"),
         patch.object(llm, "OPENCODE_MODEL", "zen-model"),
         patch.object(llm, "OPENCODE_FALLBACK_MODELS", []),
-        patch.object(llm, "_call_opencode_zen", side_effect=lambda *args: (events.append("opencode"), (_ for _ in ()).throw(RuntimeError("OpenCode down"))[1]),
+        patch.object(llm, "_call_opencode_zen", side_effect=fail_opencode),
         patch.object(llm, "NVIDIA_NIM_API_KEY", "nim-key"),
-        patch.object(llm, "_call_nvidia_nim", side_effect=lambda *args: (events.append("nim"), response)[1]),
+        patch.object(llm, "_call_nvidia_nim", side_effect=fallback_nim),
     ):
         result = llm.chat_completion([{"role": "user", "content": "hello"}])
 
