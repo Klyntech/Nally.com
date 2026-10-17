@@ -98,7 +98,7 @@ def _resolved_env(config: MCPServerConfig) -> dict[str, str]:
     }
 
 _DESTRUCTIVE_TOOL_RE = re.compile(
-    r"(?:^|_)(?:delete|remove|destroy|purge|drop|truncate)(?:_|$)", re.IGNORECASE
+    r"(?:delete|remove|destroy|purge|drop|truncate)", re.IGNORECASE
 )
 _READ_ONLY_TOOL_RE = re.compile(
     r"^(?:get|list|search|find|fetch|read|describe|inspect|show|query_logs|"
@@ -115,6 +115,9 @@ def _tool_allowed_by_policy(config: MCPServerConfig, tool_name: str) -> bool:
     if config.policy == "github_no_delete":
         return _DESTRUCTIVE_TOOL_RE.search(normalized) is None
     if config.policy == "read_only":
+        # Read-only access must not expose secrets or capabilities that can write data.
+        if re.search(r"(?:secret|password|presign|connection_string)", normalized):
+            return False
         # Arbitrary SQL execution is not read-only just because a caller intends SELECT.
         if normalized in {"run_sql", "run_sql_transaction", "execute_sql", "query"}:
             return False
