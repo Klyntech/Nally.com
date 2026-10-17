@@ -107,6 +107,16 @@ _READ_ONLY_TOOL_RE = re.compile(
 )
 
 
+def _tool_is_allowlisted(config: MCPServerConfig, tool_name: str) -> bool:
+    """Support broad discovery only when a restrictive provider policy is active."""
+    if tool_name in config.allowed_tools:
+        return True
+    return (
+        "*" in config.allowed_tools
+        and config.policy in {"github_no_delete", "read_only"}
+    )
+
+
 def _tool_allowed_by_policy(config: MCPServerConfig, tool_name: str) -> bool:
     """Apply a fail-closed policy after the configured explicit allowlist."""
     normalized = tool_name.lower().replace("-", "_")
@@ -269,7 +279,7 @@ class MCPTool:
         )
 
     def invoke(self, arguments: dict[str, Any]) -> str:
-        if self.remote_name not in self.server_config.allowed_tools:
+        if not _tool_is_allowlisted(self.server_config, self.remote_name):
             raise PermissionError(f"MCP tool {self.remote_name!r} is not allow-listed")
         if not _tool_allowed_by_policy(self.server_config, self.remote_name):
             raise PermissionError(
@@ -306,7 +316,7 @@ async def _discover_server(config: MCPServerConfig) -> list[MCPTool]:
             discovered = []
             allowed = set(config.allowed_tools)
             for metadata in response.tools:
-                if metadata.name not in allowed:
+                if not _tool_is_allowlisted(config, metadata.name):
                     continue
                 if not _tool_allowed_by_policy(config, metadata.name):
                     continue
