@@ -96,3 +96,22 @@ def test_mcp_tools_are_not_discovered_without_allowlist(monkeypatch: pytest.Monk
     assert get_mcp_tools(refresh=True) == []
 
     reset_mcp_tool_cache()
+
+def test_environment_placeholders_resolve_without_changing_literal_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nally.tools.mcp_client import _resolve_env_value
+
+    monkeypatch.setenv("MCP_TEST_TOKEN", "test-secret-value")
+
+    assert _resolve_env_value(
+        "Bearer ${MCP_TEST_TOKEN}", label="test header"
+    ) == "Bearer test-secret-value"
+    assert _resolve_env_value("plain-value", label="test header") == "plain-value"
+
+
+def test_missing_environment_placeholder_fails_closed() -> None:
+    from nally.tools.mcp_client import _resolve_env_value
+
+    with pytest.raises(ValueError, match="Missing environment variable MCP_MISSING_TOKEN"):
+        _resolve_env_value("${MCP_MISSING_TOKEN}", label="test header")
