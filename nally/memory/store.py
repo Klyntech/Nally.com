@@ -36,6 +36,14 @@ class ConversationTurn(TypedDict):
     assistant: str
 
 
+def _redact_sensitive_assignments(value: str) -> str:
+    """Remove values assigned to common sensitive-field names before auto-saving chat."""
+    pattern = re.compile(
+        r"(?i)\b(password|passwd|token|secret|api[_-]?key)\s*[:=]\s*[^\s,;]+"
+    )
+    return pattern.sub(lambda match: f"{match.group(1)}=[REDACTED]", value)
+
+
 class MemoryStore:
     def __init__(self, database_url: str | None = None):
         self.url = database_url or DATABASE_URL
@@ -102,8 +110,8 @@ class MemoryStore:
 
     def save_turn(self, user_message: str, assistant_message: str, session_id: str = "default") -> str:
         """Persist one complete user/assistant exchange."""
-        user_text = user_message.strip()
-        assistant_text = assistant_message.strip()
+        user_text = _redact_sensitive_assignments(user_message.strip())
+        assistant_text = _redact_sensitive_assignments(assistant_message.strip())
         if not user_text:
             return "Skipped empty conversation turn."
         with self._conn() as conn:
