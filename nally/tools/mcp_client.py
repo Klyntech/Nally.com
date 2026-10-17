@@ -67,6 +67,34 @@ def load_server_configs(raw: str | None = None) -> list[MCPServerConfig]:
     return configs
 
 
+_ENV_PLACEHOLDER_RE = re.compile(r"\$[{]([A-Z][A-Z0-9_]*)[}]")
+
+
+def _resolve_env_value(value: str, *, label: str) -> str:
+    """Expand environment placeholders without logging secret values."""
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        resolved = os.getenv(key)
+        if resolved is None:
+            raise ValueError(f"Missing environment variable {key} referenced by {label}")
+        return resolved
+
+    return _ENV_PLACEHOLDER_RE.sub(replace, value)
+
+
+def _resolved_headers(config: MCPServerConfig) -> dict[str, str]:
+    return {
+        key: _resolve_env_value(value, label=f"server {config.name} header {key}")
+        for key, value in config.headers.items()
+    }
+
+
+def _resolved_env(config: MCPServerConfig) -> dict[str, str]:
+    return {
+        key: _resolve_env_value(value, label=f"server {config.name} environment {key}")
+        for key, value in config.env.items()
+    }
+
 def _safe_name(value: str) -> str:
     return _NAME_RE.sub("_", value).strip("_") or "tool"
 
@@ -175,7 +203,7 @@ async def _connected_call(config: MCPServerConfig, tool_name: str, arguments: di
         params = StdioServerParameters(
             command=config.command or "",
             args=config.args,
-            env={**os.environ, **config.env},
+            env={**os.environ, **_resolved_env(config)},
         )
         async with stdio_client(params) as (read_stream, write_stream):
             return await asyncio.wait_for(
@@ -183,7 +211,7 @@ async def _connected_call(config: MCPServerConfig, tool_name: str, arguments: di
                 timeout=config.timeout_seconds,
             )
 
-    async with streamablehttp_client(config.url or "", headers=config.headers) as (
+    async with streamablehttp_client(config.url or "", headers=_resolved_headers(config)) as (
         read_stream,
         write_stream,
         _,
