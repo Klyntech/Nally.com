@@ -53,7 +53,7 @@ def load_server_configs(raw: str | None = None) -> list[MCPServerConfig]:
     except json.JSONDecodeError as exc:
         raise ValueError("NALLY_MCP_SERVERS must contain valid JSON") from exc
     if not isinstance(parsed, list):
-        raise ValueError("NALLY_MCP_SERVERS must be a JSON array")
+        raise TypeError("NALLY_MCP_SERVERS must be a JSON array")
 
     configs: list[MCPServerConfig] = []
     names: set[str] = set()
