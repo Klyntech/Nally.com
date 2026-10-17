@@ -240,6 +240,7 @@ def _load_memory_context(session_id: str, query: str | None = None) -> str:
 
     return "\n\n".join(sections)
 
+
 def run_agent(user_text: str, session_id: str = "default") -> str:
     """Run one agent turn with session-scoped tools and automatically recalled memory."""
     stable_session_id = (session_id or "default").strip() or "default"
