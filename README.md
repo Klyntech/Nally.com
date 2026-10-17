@@ -36,10 +36,31 @@ Set `NALLY_MCP_SERVERS` to a JSON array in `.env`. Example:
 ]
 ```
 
-For remote servers, set `"transport": "streamable_http"` and `"url`; optional
-`headers` can carry authentication values. Treat server commands, URLs, and
-headers as trusted administrator configuration. Never enable tools unless you
-intend to grant the agent access to them.
+For remote servers, set `"transport": "streamable_http"` and `"url"`. Header
+and stdio environment values support environment placeholders such as
+`${GITHUB_MCP_TOKEN}`; Nally resolves them at runtime and fails closed when a
+referenced variable is missing. Keep credentials in environment variables, not
+committed JSON.
+
+Initial integration targets:
+
+- **GitHub:** `https://api.githubcopilot.com/mcp/`. The current manager supports
+  bearer-token authentication; its hosted OAuth browser flow is not implemented
+  yet. Prefer the provider's read-only endpoint/options while setting up.
+- **Render:** `https://mcp.render.com/mcp`. Use a Render API key in the
+  Authorization header. Its MCP server includes deployment and environment
+  variable changes, so only allowlist the operations you intend Nally to use.
+- **Neon:** `https://mcp.neon.tech/mcp?readonly=true` for a read-only starting
+  point. Use an API key in the Authorization header. Neon OAuth is not yet
+  supported by Nally's manager.
+- **Twelve Data:** the hosted `https://mcp.twelvedata.com/mcp` endpoint uses
+  OAuth, which Nally's manager does not yet implement. Use Twelve Data's local
+  stdio server with `TWELVE_DATA_API_KEY` for now.
+
+Tool names must be explicitly listed in `allowed_tools`; do not use a wildcard
+to expose every provider tool. Start with read-only tools and add write actions
+only after testing and adding approval controls. Treat server commands, URLs,
+and headers as trusted administrator configuration.
 
 ## Quick start
 
