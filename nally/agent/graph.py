@@ -195,10 +195,17 @@ def _load_memory_context(session_id: str, query: str | None = None) -> str:
         store = get_memory_store()
         memories = store.recall(session_id=session_id, limit=20)
         recent_turns = store.recall_recent_turns(session_id=session_id, limit=8)
-        matching_turns = store.search_turns(query, session_id=session_id, limit=5) if query else []
     except Exception:
         logger.exception("Unable to load persistent memory for session")
         return ""
+
+    matching_turns = []
+    if query:
+        try:
+            matching_turns = store.search_turns(query, session_id=session_id, limit=5)
+        except Exception:
+            # Search is an enhancement; recent history and facts should still be usable.
+            logger.exception("Unable to search older conversation history")
 
     sections: list[str] = []
     if memories and memories != "No memories stored.":
