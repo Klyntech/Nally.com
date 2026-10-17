@@ -148,7 +148,7 @@ def tools_node(state: AgentState) -> dict:
             outputs.append(ToolMessage(content=f"Error: unknown tool {name}", tool_call_id=tc["id"], name=name))
             continue
         try:
-            result = tool.invoke(tc["args"])
+            with memory_session(state["session_id"]):\n                result = tool.invoke(tc["args"])
         except Exception as e:
             logger.exception("Tool failed: %s", name)
             result = f"Error: {e}"
