@@ -47,24 +47,25 @@ committed JSON.
 Initial integration targets:
 
 - **GitHub:** `https://api.githubcopilot.com/mcp/`. Use `policy: "github_no_delete"`
-  to allow configured tools except delete/remove/destroy/purge/drop/truncate operations.
+  with `allowed_tools: ["*"]` to expose every discovered tool except delete/remove/destroy/purge/drop/truncate operations.
   The current manager supports bearer-token authentication; its hosted OAuth browser
   flow is not implemented yet.
 - **Render:** `https://mcp.render.com/mcp`. Use a Render API key in the
   Authorization header. Its MCP server includes deployment and environment
   variable changes, so only allowlist the operations you intend Nally to use.
 - **Neon:** `https://mcp.neon.tech/mcp?readonly=true` and `policy: "read_only"`.
-  The local policy only exposes recognized read-oriented tool names and blocks
-  arbitrary SQL execution and mutation tools. Also use an API key in the Authorization
+  Use `allowed_tools: ["*"]` with the local `read_only` policy to expose recognized
+  read-oriented tool names while blocking arbitrary SQL execution and mutation tools. Also use an API key in the Authorization
   header. Neon OAuth is not yet supported by Nally's manager.
 - **Twelve Data:** the hosted `https://mcp.twelvedata.com/mcp` endpoint uses
   OAuth, which Nally's manager does not yet implement. Use Twelve Data's local
   stdio server with `TWELVE_DATA_API_KEY` for now.
 
-Tool names must be explicitly listed in `allowed_tools`; do not use a wildcard
-to expose every provider tool. `github_no_delete` blocks destructive tool names,
-while `read_only` uses a positive read-tool allow-pattern and blocks SQL execution.
-Unknown names are blocked by `read_only`. The remote server must also be configured
+Normally tool names must be explicitly listed in `allowed_tools`. For the requested
+provider-wide access, `allowed_tools: ["*"]` is accepted only with `github_no_delete`
+or `read_only`: GitHub exposes discovered tools except destructive names, while Neon
+exposes only recognized read-oriented tools. Wildcards are ignored with `policy: "none"`.
+The read-only policy blocks SQL execution and sensitive secret/presign operations. The remote server must also be configured
 with least-privilege credentials because local policy cannot control side effects
 hidden behind a misleading tool name. Treat server commands, URLs,
 and headers as trusted administrator configuration.
