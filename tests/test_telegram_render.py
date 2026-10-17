@@ -1,4 +1,4 @@
-from nally.telegram.Telegram_Render import render_telegram_html, split_telegram_html
+from nally.telegram.telegram_renderer import render_telegram_html, split_telegram_html
 
 
 def test_bold_markdown_becomes_telegram_html():
