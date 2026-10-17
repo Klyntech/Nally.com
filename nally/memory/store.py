@@ -1,6 +1,7 @@
 """Postgres-backed key/value memory for facts."""
 from __future__ import annotations
 
+import re
 from typing import TypedDict
 
 from nally.config import DATABASE_URL
@@ -129,6 +130,46 @@ class MemoryStore:
                 LIMIT %s
                 """,
                 (session_id, max(1, min(limit, 50))),
+            ).fetchall()
+        rows.reverse()
+        return [{"user": user_text, "assistant": assistant_text} for user_text, assistant_text in rows]
+
+    def search_turns(self, query: str, session_id: str = "default", limit: int = 5) -> list[ConversationTurn]:
+        """Find older turns matching meaningful words in the current question."""
+        stopwords = {
+            "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+            "did", "does", "doing", "say", "said", "tell", "told", "remember", "recall",
+            "about", "that", "this", "with", "from", "have", "has", "had", "was", "were",
+            "are", "the", "and", "for", "you", "your", "yours", "me", "my", "mine", "our",
+            "ours", "is", "it", "in", "on", "at", "to", "of", "do", "i", "we", "they",
+            "he", "she", "them", "their", "there", "here",
+        }
+        terms = [
+            term for term in dict.fromkeys(re.findall(r"[A-Za-z0-9]{3,}", query.lower()))
+            if term not in stopwords
+        ][:6]
+        if not terms:
+            return []
+
+        conditions = " OR ".join(
+            "(user_message ILIKE %s OR assistant_message ILIKE %s)" for _ in terms
+        )
+        parameters: list[str | int] = [session_id]
+        for term in terms:
+            pattern = f"%{term}%"
+            parameters.extend((pattern, pattern))
+        parameters.append(max(1, min(limit, 20)))
+
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT user_message, assistant_message
+                FROM nally_conversation_turns
+                WHERE session_id = %s AND ({conditions})
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                parameters,
             ).fetchall()
         rows.reverse()
         return [{"user": user_text, "assistant": assistant_text} for user_text, assistant_text in rows]
