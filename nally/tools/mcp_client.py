@@ -314,7 +314,6 @@ async def _discover_server(config: MCPServerConfig) -> list[MCPTool]:
             await session.initialize()
             response = await session.list_tools()
             discovered = []
-            allowed = set(config.allowed_tools)
             for metadata in response.tools:
                 if not _tool_is_allowlisted(config, metadata.name):
                     continue
