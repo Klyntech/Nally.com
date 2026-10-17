@@ -13,8 +13,7 @@ from nally.agent.llm import chat_completion
 from nally.agent.prompts import SYSTEM_PROMPT
 from nally.config import MAX_ITERATIONS, MAX_TOOL_CALLS, MAX_WALL_TIME
 from nally.core.logging import logger
-from nally.memory.store import MemoryStore
-from nally.tools.memory_tools import memory_session
+from nally.tools.memory_tools import get_memory_store, memory_session
 from nally.tools.registry import get_tools, get_tools_by_name
 
 
@@ -149,7 +148,7 @@ def tools_node(state: AgentState) -> dict:
             outputs.append(ToolMessage(content=f"Error: unknown tool {name}", tool_call_id=tc["id"], name=name))
             continue
         try:
-            with memory_session(state["session_id"]):\n                with memory_session(state["session_id"]):
+            with memory_session(state["session_id"]):
                 result = tool.invoke(tc["args"])
         except Exception as e:
             logger.exception("Tool failed: %s", name)
@@ -193,7 +192,7 @@ def get_graph():
 def _load_memory_context(session_id: str) -> str:
     """Load durable memory for this session; memory outages must not take chat offline."""
     try:
-        memories = MemoryStore().recall(session_id=session_id, limit=20)
+        memories = get_memory_store().recall(session_id=session_id, limit=20)
     except Exception:
         logger.exception("Unable to load persistent memory for session")
         return ""
