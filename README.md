@@ -12,6 +12,35 @@ Greenfield personal AI assistant.
 
 `web_search` tries providers in this order: Tavily, Brave Search, then DuckDuckGo. Set `TAVILY_API_KEY` and `BRAVE_SEARCH_API_KEY` in `.env`; DuckDuckGo is used without a key when the API providers are unavailable or return no usable results. Each provider request has an 8-second timeout, with a shared 18-second search budget that reduces the timeout for later providers. Explicit standalone requests such as `Search for ...` bypass the LLM round trip. The `fetch` tool remains separate and retrieves a selected URL.
 
+## MCP client
+
+Nally can consume tools from explicitly configured MCP servers. MCP is opt-in:
+servers are disabled unless `enabled` is true, and a server exposes only the
+tool names listed in `allowed_tools`. Supported transports are local `stdio`
+and remote Streamable HTTP. Each discovery or tool call has a configurable
+timeout (maximum 120 seconds); failed discovery does not stop built-in tools.
+
+Set `NALLY_MCP_SERVERS` to a JSON array in `.env`. Example:
+
+```json
+[
+  {
+    "name": "docs",
+    "transport": "stdio",
+    "enabled": true,
+    "command": "uvx",
+    "args": ["example-mcp-server"],
+    "allowed_tools": ["search_docs"],
+    "timeout_seconds": 15
+  }
+]
+```
+
+For remote servers, set `"transport": "streamable_http"` and `"url`; optional
+`headers` can carry authentication values. Treat server commands, URLs, and
+headers as trusted administrator configuration. Never enable tools unless you
+intend to grant the agent access to them.
+
 ## Quick start
 
 ```bash
