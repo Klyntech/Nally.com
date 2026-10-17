@@ -165,7 +165,7 @@ def web_search(query: str, max_results: int = 5) -> str:
                         )
                     return _format_results(results, query)
                 _LOG.info("web_search provider %s returned no usable results", provider_name)
-            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            except Exception as exc:
                 failures.append(f"{provider_name}: {type(exc).__name__}")
                 _LOG.warning("web_search provider %s failed: %s", provider_name, exc)
 
