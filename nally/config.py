@@ -43,6 +43,10 @@ MAX_ITERATIONS = int(os.getenv("NALLY_MAX_ITERATIONS", "12"))
 MAX_TOOL_CALLS = int(os.getenv("NALLY_MAX_TOOL_CALLS", "20"))
 MAX_WALL_TIME = int(os.getenv("NALLY_MAX_WALL_TIME", "90"))
 CMD_TIMEOUT = int(os.getenv("NALLY_CMD_TIMEOUT", "30"))
+# Web search providers: Tavily primary, Brave fallback, DuckDuckGo last resort.
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+BRAVE_SEARCH_API_KEY = os.getenv("BRAVE_SEARCH_API_KEY", os.getenv("BRAVE_API_KEY", "")).strip()
+
 MAX_TOOL_OUTPUT = int(os.getenv("NALLY_MAX_TOOL_OUTPUT", "20000"))
 
 # Workspace sandbox
