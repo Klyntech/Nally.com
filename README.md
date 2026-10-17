@@ -44,6 +44,39 @@ and stdio environment values support environment placeholders such as
 referenced variable is missing. Keep credentials in environment variables, not
 committed JSON.
 
+Example provider configuration for the permissions requested:
+
+```json
+[
+  {
+    "name": "github",
+    "transport": "streamable_http",
+    "enabled": true,
+    "policy": "github_no_delete",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "headers": {"Authorization": "Bearer ${GITHUB_MCP_TOKEN}"},
+    "allowed_tools": ["*"],
+    "timeout_seconds": 30
+  },
+  {
+    "name": "neon",
+    "transport": "streamable_http",
+    "enabled": true,
+    "policy": "read_only",
+    "url": "https://mcp.neon.tech/mcp?readonly=true",
+    "headers": {"Authorization": "Bearer ${NEON_API_KEY}"},
+    "allowed_tools": ["*"],
+    "timeout_seconds": 30
+  }
+]
+```
+
+Put that JSON in `NALLY_MCP_SERVERS` in the deployment environment. This enables
+GitHub's discovered tools except destructive-name operations, and Neon tools
+classified as read-only. The local policy blocks obvious destructive tools, but
+provider-side least-privilege credentials remain important: name-based filtering
+cannot guarantee that a remote server's misleadingly named tool has no side effects.
+
 Initial integration targets:
 
 - **GitHub:** `https://api.githubcopilot.com/mcp/`. Use `policy: "github_no_delete"`
