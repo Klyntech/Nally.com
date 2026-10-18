@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import types
+
 
 def test_home_keyboard_has_main_sections():
     from nally.telegram.menus import home_keyboard
@@ -28,11 +31,10 @@ def test_mcp_screen_does_not_render_secret_values(monkeypatch):
         allowed_tools = ["list_items"]
         headers = {"Authorization": "Bearer should-never-be-rendered"}
 
-    monkeypatch.setattr(
-        "nally.tools.mcp_client.load_server_configs",
-        lambda: [Config()],
-        raising=False,
-    )
+    fake_client = types.ModuleType("nally.tools.mcp_client")
+    fake_client.load_server_configs = lambda: [Config()]
+    monkeypatch.setitem(sys.modules, "nally.tools.mcp_client", fake_client)
+
     text, _ = menus.mcp_screen()
     assert "test-server" in text
     assert "Bearer" not in text
