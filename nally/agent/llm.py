@@ -1,4 +1,4 @@
-"""LLM client: OpenRouter primary, OpenCode Zen fallback (with free-tier fingerprint)."""
+"""LLM client with classified provider failures and fast healthy fallbacks."""
 from __future__ import annotations
 
 import json
@@ -13,6 +13,9 @@ from openai import OpenAI
 from nally.config import (
     FALLBACK_MODELS,
     MODEL,
+    NVIDIA_NIM_API_KEY,
+    NVIDIA_NIM_BASE_URL,
+    NVIDIA_NIM_MODEL,
     OPENCODE_API_KEY,
     OPENCODE_BASE_URL,
     OPENCODE_FALLBACK_MODELS,
@@ -79,25 +82,31 @@ _ZEN_REQUIRED_TOOLS = [
 ]
 
 
-def _is_rate_or_unavailable(exc: BaseException) -> bool:
-    t = (str(exc) + str(getattr(exc, "__cause__", "") or "")).lower()
-    markers = (
-        "429",
-        "rate limit",
-        "rate_limit",
-        "too many requests",
-        "freeusagelimit",
-        "quota",
-        "503",
-        "502",
-        "504",
-        "unavailable",
-        "overloaded",
-        "capacity",
-        "timeout",
-        "connection",
-    )
-    return any(m in t for m in markers)
+def _failure_scope(exc: BaseException) -> str:
+    """Return 'provider' for failures unlikely to improve by changing models."""
+    status = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status is None and response is not None:
+        status = getattr(response, "status_code", None)
+    detail = str(exc).lower()
+
+    # These indicate account/provider-wide constraints, not a bad model choice.
+    if status in (401, 402, 429) or any(
+        marker in detail
+        for marker in (
+            "free-models-per-day",
+            "insufficient credits",
+            "insufficient account funds",
+            "billing hard limit",
+            "quota exceeded",
+            "daily quota",
+            "rate limit exceeded",
+        )
+    ):
+        return "provider"
+    # A 403 can be model-specific (e.g. model access disabled), so let the
+    # next model on that same provider have a chance.
+    return "model"
 
 
 def _ses_id() -> str:
@@ -235,57 +244,108 @@ def _call_opencode_zen(model: str, messages: list, tools: list | None):
     return SimpleNamespace(choices=[choice], model=model)
 
 
+def _call_nvidia_nim(messages: list, tools: list | None, model: str | None = None):
+    """Call NVIDIA NIM through its OpenAI-compatible hosted endpoint."""
+    if not NVIDIA_NIM_API_KEY:
+        raise RuntimeError("NVIDIA_NIM_API_KEY not set")
+
+    client = OpenAI(
+        base_url=NVIDIA_NIM_BASE_URL,
+        api_key=NVIDIA_NIM_API_KEY,
+        timeout=60.0,
+    )
+    kwargs: dict = {
+        "model": model or NVIDIA_NIM_MODEL,
+        "messages": messages,
+        "temperature": 0.4,
+        "max_tokens": 4096,
+    }
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
+    return client.chat.completions.create(**kwargs)
+
+
 def chat_completion(messages: list, tools: list | None = None, model: str | None = None):
-    """Try OpenRouter models, then OpenCode Zen."""
+    """Try OpenRouter, then the known-good NVIDIA NIM fallback, then OpenCode Zen."""
     primary_model = model or MODEL
     last_err: BaseException | None = None
 
-    # ── 1) OpenRouter ──────────────────────────────────────────
+    # 1) OpenRouter. Skip the rest of this provider on account-wide failures.
     or_client = _openrouter_client()
     if or_client is not None:
-        tried: list[str] = []
-        for candidate in [primary_model] + [m for m in FALLBACK_MODELS if m != primary_model]:
+        tried: set[str] = set()
+        candidates = [primary_model] + [m for m in FALLBACK_MODELS if m != primary_model]
+        for candidate in candidates:
             if candidate in tried:
                 continue
-            tried.append(candidate)
+            tried.add(candidate)
             try:
                 resp = _call_openrouter(or_client, candidate, messages, tools)
                 if candidate != primary_model:
                     logger.info("OpenRouter fallback model ok: %s", candidate)
                 return resp
-            except Exception as e:
-                last_err = e
-                logger.warning("OpenRouter model %s failed: %s", candidate, e)
-                continue
+            except Exception as exc:
+                last_err = exc
+                scope = _failure_scope(exc)
+                logger.warning(
+                    "OpenRouter model %s failed (scope=%s): %s",
+                    candidate,
+                    scope,
+                    exc,
+                )
+                if scope == "provider":
+                    break
     else:
-        logger.warning("OPENROUTER_API_KEY not set — skipping OpenRouter")
+        logger.warning("OPENROUTER_API_KEY not set; skipping OpenRouter")
 
-    # ── 2) OpenCode Zen (headers + stream + required tools) ────
-    if not OPENCODE_API_KEY:
-        raise last_err or RuntimeError(
-            "All LLM providers failed. Set OPENROUTER_API_KEY and/or OPENCODE_API_KEY."
-        )
-
-    zen_models = [OPENCODE_MODEL] + [m for m in OPENCODE_FALLBACK_MODELS if m != OPENCODE_MODEL]
-    free_defaults = [
-        "big-pickle",
-        "nemotron-3.5-lightning-free",
-        "mimo-v2.6-flash-free",
-        "glm-5.3-flash-free",
-        "deepseek-v4.1-flash-free",
-    ]
-    ordered = []
-    for m in zen_models + free_defaults:
-        if m not in ordered:
-            ordered.append(m)
-
-    for candidate in ordered:
+    # 2) NVIDIA NIM has been observed healthy in production logs. Try it before
+    # spending time cycling through Zen models that may be disabled or unfunded.
+    if NVIDIA_NIM_API_KEY:
         try:
-            logger.info("Falling back to OpenCode Zen model: %s", candidate)
-            return _call_opencode_zen(candidate, messages, tools)
-        except Exception as e:
-            last_err = e
-            logger.warning("OpenCode Zen model %s failed: %s", candidate, e)
-            continue
+            logger.info("Falling back to NVIDIA NIM model: %s", NVIDIA_NIM_MODEL)
+            return _call_nvidia_nim(messages, tools)
+        except Exception as exc:
+            last_err = exc
+            logger.warning("NVIDIA NIM failed: %s", exc)
+    else:
+        logger.warning("NVIDIA_NIM_API_KEY not set; skipping NVIDIA NIM")
 
-    raise last_err or RuntimeError("OpenRouter and OpenCode Zen both failed")
+    # 3) OpenCode Zen. Stop trying models on provider-wide billing/quota failures.
+    if OPENCODE_API_KEY:
+        zen_models = [OPENCODE_MODEL] + [
+            m for m in OPENCODE_FALLBACK_MODELS if m != OPENCODE_MODEL
+        ]
+        free_defaults = [
+            "big-pickle",
+            "nemotron-3.5-lightning-free",
+            "mimo-v2.6-flash-free",
+            "glm-5.3-flash-free",
+            "deepseek-v4.1-flash-free",
+        ]
+        ordered: list[str] = []
+        for candidate in zen_models + free_defaults:
+            if candidate not in ordered:
+                ordered.append(candidate)
+
+        for candidate in ordered:
+            try:
+                logger.info("Falling back to OpenCode Zen model: %s", candidate)
+                return _call_opencode_zen(candidate, messages, tools)
+            except Exception as exc:
+                last_err = exc
+                scope = _failure_scope(exc)
+                logger.warning(
+                    "OpenCode Zen model %s failed (scope=%s): %s",
+                    candidate,
+                    scope,
+                    exc,
+                )
+                if scope == "provider":
+                    break
+    else:
+        logger.warning("OPENCODE_API_KEY not set; skipping OpenCode Zen")
+
+    raise last_err or RuntimeError(
+        "All configured LLM providers failed (OpenRouter, NVIDIA NIM, OpenCode Zen)"
+    )
