@@ -42,23 +42,23 @@ from nally.telegram.telegram_renderer import (
     split_telegram_html,
 )
 
-# Telegram Rich Message body limit is generous; keep a practical ceiling.
 _RICH_MARKDOWN_LIMIT = 32768
 
 _ALLOWED_DOC_SUFFIXES = {".pdf", ".txt", ".md", ".markdown", ".text"}
 _CAPTION_TYPE_RE = re.compile(r"(?:^|\s)type:([a-zA-Z0-9_-]+)", re.I)
-_CAPTION_JURISDICTION_RE = re.compile(r"(?:^|\s)jurisdiction:([\w\s.-]+?)(?=\s+type:|$)", re.I)
+_CAPTION_JURISDICTION_RE = re.compile(
+    r"(?:^|\s)jurisdiction:([\w\s.-]+?)(?=\s+(?:type|slug):|$)", re.I
+)
 _CAPTION_SLUG_RE = re.compile(r"(?:^|\s)slug:([a-zA-Z0-9_-]+)", re.I)
 
 
 def _allowed(user_id: int | None) -> bool:
     if not TELEGRAM_USER_ID:
-        return True  # open if unset (dev)
+        return True
     return user_id is not None and int(user_id) == int(TELEGRAM_USER_ID)
 
 
 def _parse_ingest_caption(caption: str | None, filename: str) -> dict[str, str]:
-    """Extract title / type / jurisdiction / slug from an optional caption."""
     caption = (caption or "").strip()
     doc_type = "statute"
     jurisdiction = LIBRARY_DEFAULT_JURISDICTION
@@ -116,7 +116,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Route inline menu navigation without exposing tool execution as callbacks."""
     query = update.callback_query
     user = update.effective_user
     if not query:
@@ -168,7 +167,6 @@ async def _deliver_reply(
     chat_id: int,
     bot_token: str,
 ) -> None:
-    """Send agent reply: Rich Message for tables, else HTML, else plain text."""
     reply = (reply or "").strip() or "(Nally returned an empty response.)"
 
     if len(reply) <= _RICH_MARKDOWN_LIMIT and contains_markdown_table(reply):
@@ -274,16 +272,6 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"Ingesting <b>{meta['title']}</b>…", parse_mode=ParseMode.HTML
     )
 
-    def _ingest() -> dict:
-        from nally.library.ingest import ingest_file
-
-        WORKSPACE.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=str(WORKSPACE)) as tmp:
-            dest = Path(tmp) / filename
-            # Download is async on the bot; we bridge below.
-            return {"_path": str(dest), "_meta": meta}
-
-    # Download on the event loop, ingest in a worker thread.
     try:
         tg_file = await context.bot.get_file(doc.file_id)
         WORKSPACE.mkdir(parents=True, exist_ok=True)
@@ -357,6 +345,5 @@ async def setup_telegram(application: Application, webhook_url: str | None) -> N
 
 
 async def shutdown_telegram(application: Application) -> None:
-    # NEVER deleteWebhook on shutdown — Render old instance would wipe new webhook.
     await application.stop()
     await application.shutdown()
