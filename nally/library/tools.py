@@ -82,3 +82,41 @@ def library_get(document_slug: str, section_query: str = "", limit: int = 3) -> 
             body = body[:2000] + "…"
         blocks.append(f"{r['title']} · {r['section_label']}\n{body}")
     return "\n\n".join(blocks)
+
+
+@tool
+def library_rename(
+    current_slug: str,
+    new_title: str = "",
+    new_slug: str = "",
+    jurisdiction: str = "",
+    doc_type: str = "",
+) -> str:
+    """Rename a library document or change its slug/jurisdiction/type without re-ingesting.
+
+    current_slug identifies the existing document (from library_list).
+    Provide any of new_title, new_slug, jurisdiction, doc_type to update those fields.
+    """
+    current_slug = (current_slug or "").strip()
+    if not current_slug:
+        return "Error: current_slug is required (use library_list first)"
+    if not any([(new_title or "").strip(), (new_slug or "").strip(), jurisdiction, doc_type]):
+        return "Error: provide at least one of new_title, new_slug, jurisdiction, doc_type"
+    try:
+        result = get_library_store().rename_document(
+            current_slug,
+            new_title=new_title.strip() or None,
+            new_slug=new_slug.strip() or None,
+            jurisdiction=jurisdiction if jurisdiction != "" else None,
+            doc_type=doc_type.strip() or None,
+        )
+    except Exception as e:
+        return f"Error: rename failed: {e}"
+    return (
+        f"Renamed library document.\n"
+        f"previous_slug={result['previous_slug']}\n"
+        f"slug={result['slug']}\n"
+        f"title={result['title']}\n"
+        f"type={result['doc_type']}\n"
+        f"jurisdiction={result['jurisdiction'] or '(none)'}"
+    )

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from nally.tools.file_io import file_list, file_read, file_write
-from nally.tools.library_tools import library_get, library_list, library_search
+from nally.tools.library_tools import (
+    library_get,
+    library_list,
+    library_rename,
+    library_search,
+)
 from nally.tools.mcp_client import get_mcp_tools
 from nally.tools.memory_tools import memory_forget, memory_recall, memory_remember
 from nally.tools.shell import run_command
@@ -16,6 +21,7 @@ def get_tools():
         library_list,
         library_search,
         library_get,
+        library_rename,
         run_command,
         file_read,
         file_write,

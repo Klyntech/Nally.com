@@ -118,6 +118,93 @@ class LibraryStore:
             for r in rows
         ]
 
+    def get_document(self, slug: str) -> dict[str, Any] | None:
+        slug = (slug or "").strip()
+        if not slug:
+            return None
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, slug, title, doc_type, jurisdiction, source_path
+                FROM library_documents WHERE slug = %s
+                """,
+                (slug,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": int(row[0]),
+            "slug": row[1],
+            "title": row[2],
+            "doc_type": row[3],
+            "jurisdiction": row[4] or "",
+            "source_path": row[5] or "",
+        }
+
+    def rename_document(
+        self,
+        current_slug: str,
+        *,
+        new_title: str | None = None,
+        new_slug: str | None = None,
+        jurisdiction: str | None = None,
+        doc_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Update metadata for an existing document. Chunks are unchanged."""
+        current_slug = (current_slug or "").strip()
+        if not current_slug:
+            raise ValueError("current_slug is required")
+
+        existing = self.get_document(current_slug)
+        if not existing:
+            raise ValueError(f"No library document with slug={current_slug!r}")
+
+        title = (new_title or existing["title"]).strip()
+        if not title:
+            raise ValueError("title cannot be empty")
+
+        slug = existing["slug"]
+        if new_slug is not None and new_slug.strip():
+            slug = _slugify(new_slug.strip())
+            if slug != existing["slug"]:
+                clash = self.get_document(slug)
+                if clash is not None:
+                    raise ValueError(f"Slug already in use: {slug!r}")
+
+        next_jurisdiction = (
+            existing["jurisdiction"]
+            if jurisdiction is None
+            else jurisdiction.strip()
+        )
+        next_type = existing["doc_type"] if doc_type is None else doc_type.strip().lower()
+        if not next_type:
+            next_type = existing["doc_type"]
+
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                UPDATE library_documents
+                SET slug = %s,
+                    title = %s,
+                    jurisdiction = %s,
+                    doc_type = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, slug, title, doc_type, jurisdiction
+                """,
+                (slug, title, next_jurisdiction, next_type, existing["id"]),
+            ).fetchone()
+            conn.commit()
+
+        return {
+            "document_id": int(row[0]),
+            "slug": row[1],
+            "title": row[2],
+            "doc_type": row[3],
+            "jurisdiction": row[4] or "",
+            "previous_slug": current_slug,
+        }
+
     def get_chunk(
         self,
         *,
