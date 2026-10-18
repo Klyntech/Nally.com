@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import queue
 import re
 import tempfile
 from pathlib import Path
@@ -18,6 +19,7 @@ from telegram.ext import (
     filters,
 )
 
+from nally.agent.progress import ProgressEvent
 from nally.config import (
     LIBRARY_DEFAULT_JURISDICTION,
     LIBRARY_MAX_UPLOAD_MB,
@@ -35,6 +37,7 @@ from nally.telegram.menus import (
     mcp_screen,
     tools_screen,
 )
+from nally.telegram.progress import ProgressTracker
 from nally.telegram.rich import TelegramRichMessageError, TelegramRichTransport
 from nally.telegram.telegram_renderer import (
     contains_markdown_table,
@@ -123,7 +126,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_rename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/rename current-slug | New Title [| new-slug] [jurisdiction:… type:…]"""
     if not update.message:
         return
     user = update.effective_user
@@ -132,7 +134,6 @@ async def cmd_rename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     raw = (update.message.text or "").strip()
-    # Strip command token
     body = re.sub(r"^/rename(@\w+)?\s*", "", raw, flags=re.I).strip()
     if not body:
         await update.message.reply_text(_RENAME_USAGE, parse_mode=ParseMode.HTML)
@@ -294,16 +295,55 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     status = await update.message.reply_text("Thinking…")
     session_id = f"tg:{user.id}"
 
+    progress_q: queue.Queue = queue.Queue()
+    tracker = ProgressTracker()
+
+    def on_progress(event: ProgressEvent) -> None:
+        progress_q.put(event)
+
+    async def _drain_progress() -> None:
+        while True:
+            try:
+                event = progress_q.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.25)
+                continue
+            if event is None:
+                # Flush any final status text once
+                final_text = tracker.force_text()
+                if final_text and final_text != "Thinking…":
+                    try:
+                        await status.edit_text(final_text)
+                    except Exception:
+                        pass
+                return
+            new_text = tracker.on_event(event)
+            if not new_text:
+                continue
+            try:
+                await status.edit_text(new_text)
+            except Exception:
+                # Ignore flood / unchanged message errors
+                logger.debug("progress edit skipped", exc_info=True)
+
+    drain_task = asyncio.create_task(_drain_progress())
+
     def _run():
         from nally.agent.graph import run_agent
 
-        return run_agent(text, session_id=session_id)
+        return run_agent(text, session_id=session_id, on_progress=on_progress)
 
     try:
         reply = await asyncio.to_thread(_run)
     except Exception as e:
         logger.exception("telegram agent failed")
         reply = f"Error: {e}"
+    finally:
+        progress_q.put(None)
+        try:
+            await asyncio.wait_for(drain_task, timeout=5)
+        except Exception:
+            drain_task.cancel()
 
     token = context.bot.token if context.bot else TELEGRAM_BOT_TOKEN
     await _deliver_reply(
@@ -315,7 +355,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Ingest an uploaded study document into the personal library."""
     if not update.message or not update.message.document:
         return
     user = update.effective_user

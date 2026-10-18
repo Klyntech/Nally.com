@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Callable, Literal, TypedDict
 
 from langchain_core.messages import (
     AIMessage,
@@ -17,6 +17,14 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from nally.agent.llm import chat_completion
+from nally.agent.progress import (
+    ProgressCallback,
+    ProgressEvent,
+    emit_progress,
+    format_tool_detail,
+    reset_progress_callback,
+    set_progress_callback,
+)
 from nally.agent.prompts import SYSTEM_PROMPT
 from nally.config import MAX_ITERATIONS, MAX_TOOL_CALLS, MAX_WALL_TIME
 from nally.core.logging import logger
@@ -107,6 +115,7 @@ def llm_node(state: AgentState) -> dict:
             "iteration": state["iteration"] + 1,
         }
 
+    emit_progress(ProgressEvent(kind="thinking", detail="planning"))
     tools = get_tools()
     oai_tools = _lc_tools_to_openai(tools)
     oai_msgs = _messages_to_openai(state["messages"])
@@ -150,18 +159,34 @@ def tools_node(state: AgentState) -> dict:
             )
             continue
         name = tc["name"]
+        args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+        detail = format_tool_detail(name, args)
         tool = by_name.get(name)
         count += 1
+        emit_progress(
+            ProgressEvent(kind="tool_start", tool=name, detail=detail, status="running")
+        )
         if not tool:
-            outputs.append(ToolMessage(content=f"Error: unknown tool {name}", tool_call_id=tc["id"], name=name))
+            result = f"Error: unknown tool {name}"
+            outputs.append(ToolMessage(content=result, tool_call_id=tc["id"], name=name))
+            emit_progress(
+                ProgressEvent(kind="tool_end", tool=name, detail=detail, status="error")
+            )
             continue
         try:
             with memory_session(state["session_id"]):
                 result = tool.invoke(tc["args"])
+            status: Literal["ok", "error"] = "ok"
+            if isinstance(result, str) and result.startswith("Error:"):
+                status = "error"
         except Exception as e:
             logger.exception("Tool failed: %s", name)
             result = f"Error: {e}"
+            status = "error"
         outputs.append(ToolMessage(content=str(result), tool_call_id=tc["id"], name=name))
+        emit_progress(
+            ProgressEvent(kind="tool_end", tool=name, detail=detail, status=status)
+        )
 
     return {"messages": outputs, "tool_calls": count}
 
@@ -212,7 +237,6 @@ def _load_memory_context(session_id: str, query: str | None = None) -> str:
         try:
             matching_turns = store.search_turns(query, session_id=session_id, limit=5)
         except Exception:
-            # Search is an enhancement; recent history and facts should still be usable.
             logger.exception("Unable to search older conversation history")
 
     sections: list[str] = []
@@ -273,26 +297,63 @@ def _direct_search_query(user_text: str) -> str | None:
     return query or None
 
 
-def run_agent(user_text: str, session_id: str = "default") -> str:
+def run_agent(
+    user_text: str,
+    session_id: str = "default",
+    on_progress: ProgressCallback | None = None,
+) -> str:
     """Run one agent turn with session-scoped tools and automatically recalled memory."""
     stable_session_id = (session_id or "default").strip() or "default"
     if len(stable_session_id) > 200:
         raise ValueError("session_id must be 200 characters or fewer")
 
+    token = set_progress_callback(on_progress)
+    try:
+        return _run_agent_inner(user_text, stable_session_id)
+    finally:
+        reset_progress_callback(token)
+
+
+def _run_agent_inner(user_text: str, stable_session_id: str) -> str:
     query = _direct_search_query(user_text)
     if query:
         started = time.monotonic()
         logger.info("direct web search started query=%r max_results=4", query[:160])
+        emit_progress(
+            ProgressEvent(
+                kind="tool_start",
+                tool="web_search",
+                detail=query[:90],
+                status="running",
+            )
+        )
         try:
             result = str(web_search.invoke({"query": query, "max_results": 4}))
+            emit_progress(
+                ProgressEvent(
+                    kind="tool_end",
+                    tool="web_search",
+                    detail=query[:90],
+                    status="ok",
+                )
+            )
         except Exception as exc:
             logger.exception("direct web search failed")
             result = f"Web search failed: {type(exc).__name__}"
+            emit_progress(
+                ProgressEvent(
+                    kind="tool_end",
+                    tool="web_search",
+                    detail=query[:90],
+                    status="error",
+                )
+            )
         logger.info("direct web search finished elapsed=%.2fs", time.monotonic() - started)
         try:
             get_memory_store().save_turn(user_text, result, session_id=stable_session_id)
         except Exception:
             logger.exception("Unable to persist direct-search turn")
+        emit_progress(ProgressEvent(kind="done"))
         return result
 
     graph = get_graph()
@@ -318,11 +379,10 @@ def run_agent(user_text: str, session_id: str = "default") -> str:
             reply = m.content
             break
 
-    # Persist every exchange separately from explicit key/value fact memory.
-    # Database failures must not discard an otherwise successful chat response.
     try:
         get_memory_store().save_turn(user_text, reply, session_id=stable_session_id)
     except Exception:
         logger.exception("Unable to persist conversation turn")
 
+    emit_progress(ProgressEvent(kind="done"))
     return reply
