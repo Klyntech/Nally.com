@@ -7,9 +7,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from nally.config import DATABASE_URL, NVIDIA_EMBED_DIM
+from nally.config import DATABASE_URL
 from nally.core.logging import logger
-from nally.library.chunking import Chunk, chunk_document
+from nally.library.chunking import chunk_document
 from nally.library.embeddings import EmbeddingError, embed_passages, embed_query
 
 _SCHEMA = """
@@ -264,7 +264,7 @@ class LibraryStore:
                 qvec, limit=limit * 2, document_slug=document_slug
             )
         except EmbeddingError as exc:
-            logger.warning("Vector search unavailable: %s", exp if False else exc)
+            logger.warning("Vector search unavailable: %s", exc)
 
         merged: dict[tuple[int, str, str], SearchHit] = {}
         for hit in fts_hits + vec_hits:
@@ -279,12 +279,12 @@ class LibraryStore:
     def _search_fts(
         self, query: str, *, limit: int, document_slug: str | None
     ) -> list[SearchHit]:
-        params: list[Any] = [query]
         slug_clause = ""
         if document_slug:
             slug_clause = "AND d.slug = %s"
-            params.append(document_slug)
-        params.append(limit)
+            params: list[Any] = [query, query, document_slug, limit]
+        else:
+            params = [query, query, limit]
         sql = f"""
             SELECT d.id, d.title, d.slug, c.section_label, c.content,
                    ts_rank_cd(c.tsv, plainto_tsquery('english', %s)) AS rank
@@ -295,11 +295,6 @@ class LibraryStore:
             ORDER BY rank DESC
             LIMIT %s
         """
-        # plainto_tsquery used twice
-        if document_slug:
-            params = [query, query, document_slug, limit]
-        else:
-            params = [query, query, limit]
         with self._conn() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [
@@ -309,7 +304,7 @@ class LibraryStore:
                 document_slug=r[2],
                 section_label=r[3] or "",
                 content=r[4],
-                score=float(r[5] or 0) + 0.15,  # slight bias so pure FTS still ranks
+                score=float(r[5] or 0) + 0.15,
                 method="fts",
             )
             for r in rows
