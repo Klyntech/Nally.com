@@ -51,6 +51,13 @@ _CAPTION_JURISDICTION_RE = re.compile(
 )
 _CAPTION_SLUG_RE = re.compile(r"(?:^|\s)slug:([a-zA-Z0-9_-]+)", re.I)
 
+_RENAME_USAGE = (
+    "Usage:\n"
+    "<code>/rename current-slug | New Title</code>\n"
+    "<code>/rename current-slug | New Title | new-slug</code>\n\n"
+    "Optional trailing tags: <code>jurisdiction:Nigeria</code> <code>type:statute</code>"
+)
+
 
 def _allowed(user_id: int | None) -> bool:
     if not TELEGRAM_USER_ID:
@@ -115,6 +122,72 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
 
+async def cmd_rename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/rename current-slug | New Title [| new-slug] [jurisdiction:… type:…]"""
+    if not update.message:
+        return
+    user = update.effective_user
+    if not user or not _allowed(user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+
+    raw = (update.message.text or "").strip()
+    # Strip command token
+    body = re.sub(r"^/rename(@\w+)?\s*", "", raw, flags=re.I).strip()
+    if not body:
+        await update.message.reply_text(_RENAME_USAGE, parse_mode=ParseMode.HTML)
+        return
+
+    jurisdiction = None
+    doc_type = None
+    m = _CAPTION_JURISDICTION_RE.search(body)
+    if m:
+        jurisdiction = m.group(1).strip()
+        body = _CAPTION_JURISDICTION_RE.sub("", body)
+    m = _CAPTION_TYPE_RE.search(body)
+    if m:
+        doc_type = m.group(1).lower()
+        body = _CAPTION_TYPE_RE.sub("", body)
+    body = re.sub(r"\s+", " ", body).strip(" |")
+
+    parts = [p.strip() for p in body.split("|") if p.strip()]
+    if len(parts) < 2:
+        await update.message.reply_text(_RENAME_USAGE, parse_mode=ParseMode.HTML)
+        return
+
+    current_slug = parts[0]
+    new_title = parts[1]
+    new_slug = parts[2] if len(parts) >= 3 else None
+
+    try:
+
+        def _run():
+            from nally.library.store import get_library_store
+
+            return get_library_store().rename_document(
+                current_slug,
+                new_title=new_title,
+                new_slug=new_slug,
+                jurisdiction=jurisdiction,
+                doc_type=doc_type,
+            )
+
+        result = await asyncio.to_thread(_run)
+    except Exception as e:
+        await update.message.reply_text(f"Rename failed: {e}")
+        return
+
+    await update.message.reply_text(
+        (
+            f"Renamed.\n"
+            f"• title: <b>{result['title']}</b>\n"
+            f"• slug: <code>{result['slug']}</code>\n"
+            f"• previous: <code>{result['previous_slug']}</code>"
+        ),
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user = update.effective_user
@@ -138,7 +211,8 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         text = (
             "<b>Chat mode</b>\n\n"
             "Send your next message normally. Nally will use available tools when needed.\n"
-            "Send a <b>PDF / TXT / MD</b> document to ingest it into your study library."
+            "Send a <b>PDF / TXT / MD</b> document to ingest it into your study library.\n"
+            "Rename with <code>/rename current-slug | New Title</code>."
         )
         keyboard = home_keyboard()
     else:
@@ -322,6 +396,7 @@ def build_application() -> Optional[Application]:
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("rename", cmd_rename))
     app.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
