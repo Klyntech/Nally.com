@@ -35,7 +35,7 @@ def _table_text(lines: list[str]) -> str:
         for i, value in enumerate(row):
             value = re.sub(r"\s+", " ", value)
             if len(value) > widths[i]:
-                value = value[:widths[i] - 1] + "…"
+                value = value[: widths[i] - 1] + "…"
             cells.append(value.ljust(widths[i]))
         return "  ".join(cells).rstrip()
 
@@ -64,6 +64,27 @@ def _tables_to_fences(text: str) -> str:
             result.append(lines[i])
             i += 1
     return "\n".join(result)
+
+
+def contains_markdown_table(text: str) -> bool:
+    """Return True when text contains a GitHub-Flavored Markdown table.
+
+    Detects both pipe-wrapped rows and tables without outer pipes, matching
+    a header line followed by a separator row (| --- | ---: |, etc.).
+    """
+    lines = [line.strip() for line in (text or "").splitlines()]
+    for index in range(len(lines) - 1):
+        header = lines[index]
+        separator = lines[index + 1]
+        if "|" not in header and "|" not in separator:
+            continue
+        if _is_separator(separator):
+            return True
+        # Tables without leading/trailing pipes still use | in the separator.
+        cells = _cells(separator) if "|" in separator else []
+        if cells and all(re.fullmatch(r":?-{3,}:?", c.replace(" ", "")) for c in cells):
+            return True
+    return False
 
 
 class _TelegramHTML(HTMLParser):

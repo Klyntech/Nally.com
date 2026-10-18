@@ -29,7 +29,15 @@ from nally.telegram.menus import (
     mcp_screen,
     tools_screen,
 )
-from nally.telegram.telegram_renderer import render_telegram_html, split_telegram_html
+from nally.telegram.rich import TelegramRichMessageError, TelegramRichTransport
+from nally.telegram.telegram_renderer import (
+    contains_markdown_table,
+    render_telegram_html,
+    split_telegram_html,
+)
+
+# Telegram Rich Message body limit is generous; keep a practical ceiling.
+_RICH_MARKDOWN_LIMIT = 32768
 
 
 def _allowed(user_id: int | None) -> bool:
@@ -108,6 +116,53 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
 
 
+async def _deliver_reply(
+    *,
+    status_message,
+    reply: str,
+    chat_id: int,
+    bot_token: str,
+) -> None:
+    """Send agent reply: Rich Message for tables, else HTML, else plain text."""
+    reply = (reply or "").strip() or "(Nally returned an empty response.)"
+
+    # Prefer native tables via Telegram Rich Markdown when a GFM table is present.
+    if len(reply) <= _RICH_MARKDOWN_LIMIT and contains_markdown_table(reply):
+        try:
+            transport = TelegramRichTransport(bot_token)
+            await transport.edit_markdown(
+                chat_id=chat_id,
+                message_id=status_message.message_id,
+                markdown=reply,
+            )
+            return
+        except TelegramRichMessageError as exc:
+            logger.warning("Telegram rich message failed; falling back to HTML: %s", exc)
+
+    rendered = render_telegram_html(reply)
+    chunks = split_telegram_html(rendered, limit=3900)
+    if not chunks:
+        chunks = ["(Nally returned an empty response.)"]
+
+    send_parse_mode = ParseMode.HTML
+    try:
+        await status_message.edit_text(chunks[0], parse_mode=send_parse_mode)
+    except Exception:
+        logger.exception("Telegram HTML rendering/send failed; retrying as plain text")
+        send_parse_mode = None
+        plain = reply
+        chunks = [plain[i : i + 3900] for i in range(0, len(plain), 3900)] or [
+            "(Nally returned an empty response.)"
+        ]
+        try:
+            await status_message.edit_text(chunks[0])
+        except Exception:
+            await status_message.reply_text(chunks[0])
+
+    for chunk in chunks[1:]:
+        await status_message.reply_text(chunk, parse_mode=send_parse_mode)
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
         return
@@ -134,27 +189,13 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("telegram agent failed")
         reply = f"Error: {e}"
 
-    rendered = render_telegram_html(str(reply))
-    chunks = split_telegram_html(rendered, limit=3900)
-    if not chunks:
-        chunks = ["(Nally returned an empty response.)"]
-
-    send_parse_mode = ParseMode.HTML
-    try:
-        await status.edit_text(chunks[0], parse_mode=send_parse_mode)
-    except Exception:
-        logger.exception("Telegram HTML rendering/send failed; retrying as plain text")
-        send_parse_mode = None
-        plain = str(reply)
-        chunks = [
-            plain[i : i + 3900] for i in range(0, len(plain), 3900)
-        ] or ["(Nally returned an empty response.)"]
-        try:
-            await status.edit_text(chunks[0])
-        except Exception:
-            await update.message.reply_text(chunks[0])
-    for chunk in chunks[1:]:
-        await update.message.reply_text(chunk, parse_mode=send_parse_mode)
+    token = context.bot.token if context.bot else TELEGRAM_BOT_TOKEN
+    await _deliver_reply(
+        status_message=status,
+        reply=str(reply),
+        chat_id=status.chat_id,
+        bot_token=token or "",
+    )
 
 
 def build_application() -> Optional[Application]:

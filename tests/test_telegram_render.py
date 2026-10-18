@@ -1,4 +1,8 @@
-from nally.telegram.telegram_renderer import render_telegram_html, split_telegram_html
+from nally.telegram.telegram_renderer import (
+    contains_markdown_table,
+    render_telegram_html,
+    split_telegram_html,
+)
 
 
 def test_bold_markdown_becomes_telegram_html():
@@ -8,6 +12,7 @@ def test_bold_markdown_becomes_telegram_html():
 
 
 def test_markdown_table_becomes_aligned_preformatted_text():
+    """HTML fallback path still renders tables as aligned <pre> text."""
     rendered = render_telegram_html(
         "| Name | Status |\n"
         "| --- | --- |\n"
@@ -18,6 +23,26 @@ def test_markdown_table_becomes_aligned_preformatted_text():
     assert "Name" in rendered and "Status" in rendered
     assert "Nally" in rendered and "Pending" in rendered
     assert "<table>" not in rendered
+
+
+def test_contains_markdown_table_detects_gfm():
+    text = (
+        "Results\n\n"
+        "| Name | Score |\n"
+        "| --- | ---: |\n"
+        "| Alpha | 95 |\n"
+        "| Beta | 87 |\n"
+    )
+    assert contains_markdown_table(text)
+
+
+def test_contains_markdown_table_detects_without_outer_pipes():
+    text = "Name | Score\n--- | ---:\nAlpha | 95\n"
+    assert contains_markdown_table(text)
+
+
+def test_contains_markdown_table_ignores_pipe_prose():
+    assert not contains_markdown_table("Use a | b as an example.")
 
 
 def test_raw_html_is_not_trusted():
@@ -37,3 +62,4 @@ def test_split_keeps_each_chunk_within_limit_and_balances_basic_tags():
 def test_empty_input():
     assert render_telegram_html("") == ""
     assert split_telegram_html("") == []
+    assert not contains_markdown_table("")
