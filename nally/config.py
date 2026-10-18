@@ -32,10 +32,26 @@ OPENCODE_FALLBACK_MODELS = [
     if m.strip()
 ]
 
-# NVIDIA NIM (last-resort fallback after OpenRouter and OpenCode Zen)
+# NVIDIA NIM (last-resort LLM fallback after OpenRouter and OpenCode Zen)
 NVIDIA_NIM_API_KEY = os.getenv("NVIDIA_NIM_API_KEY", "")
 NVIDIA_NIM_BASE_URL = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
 NVIDIA_NIM_MODEL = os.getenv("NVIDIA_NIM_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
+
+# NVIDIA embeddings (document library / RAG)
+# Prefer NVIDIA_EMBED_API_KEY; fall back to generic NVIDIA keys.
+NVIDIA_EMBED_API_KEY = (
+    os.getenv("NVIDIA_EMBED_API_KEY", "").strip()
+    or os.getenv("NVIDIA_API_KEY", "").strip()
+    or NVIDIA_NIM_API_KEY.strip()
+)
+NVIDIA_EMBED_BASE_URL = os.getenv(
+    "NVIDIA_EMBED_BASE_URL",
+    os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+).rstrip("/")
+NVIDIA_EMBED_MODEL = os.getenv(
+    "NVIDIA_EMBED_MODEL", "nvidia/llama-nemotron-embed-vl-1b-v2"
+)
+NVIDIA_EMBED_DIM = int(os.getenv("NVIDIA_EMBED_DIM", "2048"))
 
 # Auth
 ACCESS_TOKEN = os.getenv("NALLY_ACCESS_TOKEN", "")
