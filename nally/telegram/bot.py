@@ -6,10 +6,29 @@ from typing import Optional
 
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-from nally.config import TELEGRAM_BOT_TOKEN, TELEGRAM_MODE, TELEGRAM_USER_ID, TELEGRAM_WEBHOOK_SECRET
+from nally.config import (
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_MODE,
+    TELEGRAM_USER_ID,
+    TELEGRAM_WEBHOOK_SECRET,
+)
 from nally.core.logging import logger
+from nally.telegram.menus import (
+    HOME_TEXT,
+    help_screen,
+    home_keyboard,
+    mcp_screen,
+    tools_screen,
+)
 from nally.telegram.telegram_renderer import render_telegram_html, split_telegram_html
 
 
@@ -25,17 +44,68 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("Unauthorized.")
         return
     if update.message:
-        await update.message.reply_text("Nally online. Send a message.")
+        await update.message.reply_text(
+            HOME_TEXT,
+            parse_mode=ParseMode.HTML,
+            reply_markup=home_keyboard(),
+        )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not _allowed(update.effective_user.id):
         return
     if update.message:
+        text, keyboard = help_screen()
         await update.message.reply_text(
-            "I can use memory, files, shell, web_search, and fetch.\n"
-            "Just chat — I'll use tools when needed."
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
         )
+
+
+async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route inline menu navigation without exposing tool execution as callbacks."""
+    query = update.callback_query
+    user = update.effective_user
+    if not query:
+        return
+    if not user or not _allowed(user.id):
+        await query.answer("Unauthorized.", show_alert=True)
+        return
+
+    await query.answer()
+    destination = query.data or ""
+    if destination == "menu:home":
+        text, keyboard = HOME_TEXT, home_keyboard()
+    elif destination == "menu:tools":
+        text, keyboard = tools_screen()
+    elif destination == "menu:mcp":
+        text, keyboard = mcp_screen()
+    elif destination == "menu:help":
+        text, keyboard = help_screen()
+    elif destination == "menu:chat":
+        text = (
+            "<b>Chat mode</b>\n\n"
+            "Send your next message normally. Nally will use available tools when needed."
+        )
+        keyboard = home_keyboard()
+    else:
+        text, keyboard = HOME_TEXT, home_keyboard()
+
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+    except Exception:
+        logger.exception("Telegram inline menu update failed")
+        if query.message:
+            await query.message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -76,7 +146,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Telegram HTML rendering/send failed; retrying as plain text")
         send_parse_mode = None
         plain = str(reply)
-        chunks = [plain[i:i + 3900] for i in range(0, len(plain), 3900)] or ["(Nally returned an empty response.)"]
+        chunks = [
+            plain[i : i + 3900] for i in range(0, len(plain), 3900)
+        ] or ["(Nally returned an empty response.)"]
         try:
             await status.edit_text(chunks[0])
         except Exception:
@@ -97,6 +169,7 @@ def build_application() -> Optional[Application]:
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return app
 
