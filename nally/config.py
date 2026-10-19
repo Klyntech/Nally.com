@@ -18,8 +18,6 @@ MODEL = os.getenv("NALLY_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 OPENROUTER_REASONING = os.getenv("NALLY_OPENROUTER_REASONING", "false").lower() in ("1", "true", "yes")
 
 # OpenCode Zen (fallback after OpenRouter fails)
-# NOTE: Zen *free* models return FreeTierError outside the OpenCode app.
-# External API needs a funded Zen account + paid model ids (e.g. glm-5.3-flash).
 OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY", "")
 OPENCODE_BASE_URL = os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1")
 OPENCODE_MODEL = os.getenv("OPENCODE_MODEL", "glm-5.3-flash")
@@ -32,10 +30,29 @@ OPENCODE_FALLBACK_MODELS = [
     if m.strip()
 ]
 
-# NVIDIA NIM (last-resort fallback after OpenRouter and OpenCode Zen)
+# NVIDIA NIM (last-resort LLM fallback)
 NVIDIA_NIM_API_KEY = os.getenv("NVIDIA_NIM_API_KEY", "")
 NVIDIA_NIM_BASE_URL = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
 NVIDIA_NIM_MODEL = os.getenv("NVIDIA_NIM_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
+
+# NVIDIA embeddings (document library / RAG)
+NVIDIA_EMBED_API_KEY = (
+    os.getenv("NVIDIA_EMBED_API_KEY", "").strip()
+    or os.getenv("NVIDIA_API_KEY", "").strip()
+    or NVIDIA_NIM_API_KEY.strip()
+)
+NVIDIA_EMBED_BASE_URL = os.getenv(
+    "NVIDIA_EMBED_BASE_URL",
+    os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+).rstrip("/")
+NVIDIA_EMBED_MODEL = os.getenv(
+    "NVIDIA_EMBED_MODEL", "nvidia/llama-nemotron-embed-vl-1b-v2"
+)
+NVIDIA_EMBED_DIM = int(os.getenv("NVIDIA_EMBED_DIM", "2048"))
+
+# Study library defaults
+LIBRARY_DEFAULT_JURISDICTION = os.getenv("LIBRARY_DEFAULT_JURISDICTION", "").strip()
+LIBRARY_MAX_UPLOAD_MB = int(os.getenv("LIBRARY_MAX_UPLOAD_MB", "20"))
 
 # Auth
 ACCESS_TOKEN = os.getenv("NALLY_ACCESS_TOKEN", "")
@@ -48,7 +65,6 @@ MAX_ITERATIONS = int(os.getenv("NALLY_MAX_ITERATIONS", "12"))
 MAX_TOOL_CALLS = int(os.getenv("NALLY_MAX_TOOL_CALLS", "20"))
 MAX_WALL_TIME = int(os.getenv("NALLY_MAX_WALL_TIME", "90"))
 CMD_TIMEOUT = int(os.getenv("NALLY_CMD_TIMEOUT", "30"))
-# Web search providers: Tavily primary, Brave fallback, DuckDuckGo last resort.
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 BRAVE_SEARCH_API_KEY = os.getenv("BRAVE_SEARCH_API_KEY", os.getenv("BRAVE_API_KEY", "")).strip()
 
@@ -67,7 +83,6 @@ TELEGRAM_USER_ID = int(os.getenv("TELEGRAM_USER_ID", "0") or "0")
 TELEGRAM_MODE = os.getenv("TELEGRAM_MODE", "webhook").lower()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 
-# OpenRouter model fallbacks (same provider)
 FALLBACK_MODELS = [
     MODEL,
     "liquid/lfm-2.5-2.6b:free",

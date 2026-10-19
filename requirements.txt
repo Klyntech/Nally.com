@@ -10,3 +10,4 @@ python-dotenv>=1.0.0
 python-telegram-bot>=21.0
 markdown-it-py>=3.0.0
 mcp>=1.9.0,<2.0.0
+pypdf>=5.0.0
