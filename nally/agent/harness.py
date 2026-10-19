@@ -14,6 +14,7 @@ TaskMode = Literal[
     "general",
     "research",
     "document_analysis",
+    "analysis",
     "creation",
     "planning",
     "execution",
@@ -44,6 +45,13 @@ _MODE_PATTERNS: tuple[tuple[TaskMode, re.Pattern[str]], ...] = (
         re.compile(
             r"\b(?:research|search (?:the web|online|for)|look up|latest|current|"
             r"recent|sources?|citations?|compare (?:the|these|current)|investigate)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "analysis",
+        re.compile(
+            r"\\b(?:analy[sz]e|analysis|audit|review|inspect|assess|evaluate|examine|interpret)\\b",
             re.IGNORECASE,
         ),
     ),
@@ -100,6 +108,11 @@ _MODE_GUIDANCE: dict[TaskMode, str] = {
         "Ground document-specific claims in retrieved passages. Search focused subtopics "
         "when the question spans several concepts, place source markers beside supported "
         "claims, and distinguish an exact phrase miss from absence of a relevant rule."
+    ),
+    "analysis": (
+        "Analyze the available evidence before concluding. Separate observations from "
+        "inferences and unknowns, compare plausible explanations, and present the most "
+        "important findings and practical implications without inventing missing facts."
     ),
     "creation": (
         "Deliver the requested artifact in the requested format and audience/tone. Avoid "
