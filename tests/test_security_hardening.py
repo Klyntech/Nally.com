@@ -1,7 +1,9 @@
 """Regression tests for authentication and tool isolation boundaries."""
 from __future__ import annotations
 
+import asyncio
 import importlib
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -9,6 +11,7 @@ from fastapi import HTTPException
 api = importlib.import_module("nally.api.app")
 file_io = importlib.import_module("nally.tools.file_io")
 shell = importlib.import_module("nally.tools.shell")
+telegram_bot = importlib.import_module("nally.telegram.bot")
 
 
 def test_api_auth_fails_closed_when_token_is_unconfigured(monkeypatch) -> None:
@@ -153,3 +156,19 @@ def test_shell_argv_enables_namespace_isolation_and_never_mounts_host_root(tmp_p
         for index, item in enumerate(argv)
         if item == "--bind"
     )
+
+
+
+def test_webhook_setup_rejects_missing_secret_before_starting_application(monkeypatch) -> None:
+    monkeypatch.setattr(telegram_bot, "TELEGRAM_WEBHOOK_SECRET", "")
+    application = type(
+        "FakeApplication",
+        (),
+        {"initialize": AsyncMock(), "start": AsyncMock()},
+    )()
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_WEBHOOK_SECRET is required"):
+        asyncio.run(telegram_bot.setup_telegram(application, "https://example.test"))
+
+    application.initialize.assert_not_awaited()
+    application.start.assert_not_awaited()
