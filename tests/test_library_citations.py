@@ -77,3 +77,22 @@ def test_final_answer_appends_only_missing_retrieved_citations() -> None:
 
     assert "[source:evidence-act#chunk-4] Constitution" not in result
     assert "[source:constitution#chunk-7] Constitution · Article 12" in result
+
+
+def test_fallback_citation_list_is_capped() -> None:
+    messages = [
+        ToolMessage(
+            content=(
+                f"[{i}] Constitution · Section {i} "
+                f"[source:constitution-1999#chunk-{i}] (score=0.9)"
+            ),
+            tool_call_id=f"call-{i}",
+            name="library_search",
+        )
+        for i in range(1, 8)
+    ]
+
+    result = _append_library_citations("A constitutional summary.", messages)
+
+    assert result.count("[source:constitution-1999#chunk-") == 4
+    assert "3 additional retrieved source(s) omitted" in result
