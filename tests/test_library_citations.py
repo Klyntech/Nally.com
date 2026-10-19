@@ -5,7 +5,7 @@ from langchain_core.messages import ToolMessage
 
 from nally.agent.graph import _append_library_citations
 from nally.library.store import SearchHit
-from nally.tools import library_tools
+from nally.library import tools as library_tools
 
 
 def test_library_search_emits_stable_document_chunk_reference(monkeypatch) -> None:
