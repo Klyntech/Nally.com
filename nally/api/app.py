@@ -15,6 +15,7 @@ from telegram.ext import Application
 from nally import __version__
 from nally.config import (
     ACCESS_TOKEN,
+    ACCESS_TOKENS,
     MODEL,
     NALLY_BASE_URL,
     PROVIDER,
@@ -54,23 +55,32 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Nally.com", version=__version__, lifespan=lifespan)
 
 
-def _token_identity(token: str) -> str:
-    """Return a stable non-secret namespace for the configured API principal."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+def _token_identity(principal: str) -> str:
+    """Return a stable, non-secret namespace for one authenticated principal."""
+    return hashlib.sha256(principal.encode("utf-8")).hexdigest()[:16]
 
 
 def require_auth(authorization: str | None = Header(default=None)) -> str:
-    """Fail closed unless a configured bearer token matches in constant time."""
-    expected = (ACCESS_TOKEN or "").strip()
-    if not expected:
+    """Fail closed unless a configured principal's bearer token matches."""
+    legacy_token = (ACCESS_TOKEN or "").strip()
+    if not legacy_token and not ACCESS_TOKENS:
         raise HTTPException(503, "API authentication is not configured")
 
     scheme, _, supplied = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not supplied.strip():
+    supplied = supplied.strip()
+    if scheme.lower() != "bearer" or not supplied:
         raise HTTPException(401, "Invalid or missing bearer token")
-    if not hmac.compare_digest(supplied.strip(), expected):
-        raise HTTPException(401, "Invalid or missing bearer token")
-    return _token_identity(expected)
+
+    matched_principal = None
+    for principal, candidate in ACCESS_TOKENS.items():
+        if hmac.compare_digest(supplied, candidate):
+            matched_principal = principal
+    if matched_principal is not None:
+        return _token_identity(f"named:{matched_principal}")
+
+    if legacy_token and hmac.compare_digest(supplied, legacy_token):
+        return _token_identity(f"legacy:{legacy_token}")
+    raise HTTPException(401, "Invalid or missing bearer token")
 
 
 def _verify_telegram_webhook_secret(secret: str | None) -> None:
