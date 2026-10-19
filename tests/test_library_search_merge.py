@@ -21,3 +21,56 @@ def test_search_hit_fields():
         method="vector",
     )
     assert h.document_slug == "evidence-act"
+
+
+def test_search_merges_duplicate_chunks_and_ranks_relevant_passages(monkeypatch) -> None:
+    import nally.library.store as library_store
+
+    store = object.__new__(library_store.LibraryStore)
+    fts_duplicate = SearchHit(
+        document_id=1,
+        document_title="Evidence Act",
+        document_slug="evidence-act",
+        section_label="Section 1",
+        content="Evidence is relevant when it supports a fact.",
+        score=0.4,
+        method="fts",
+        ordinal=1,
+    )
+    vector_duplicate = SearchHit(
+        document_id=1,
+        document_title="Evidence Act",
+        document_slug="evidence-act",
+        section_label="Section 1",
+        content="Evidence is relevant when it supports a fact.",
+        score=0.95,
+        method="vector",
+        ordinal=1,
+    )
+    second_passage = SearchHit(
+        document_id=1,
+        document_title="Evidence Act",
+        document_slug="evidence-act",
+        section_label="Section 2",
+        content="A separate relevant passage.",
+        score=0.7,
+        method="vector",
+        ordinal=2,
+    )
+    monkeypatch.setattr(
+        store,
+        "_search_fts",
+        lambda query, *, limit, document_slug: [fts_duplicate],
+    )
+    monkeypatch.setattr(library_store, "embed_query", lambda query: [1.0, 0.0])
+    monkeypatch.setattr(
+        store,
+        "_search_vectors",
+        lambda query_vec, *, limit, document_slug: [vector_duplicate, second_passage],
+    )
+
+    hits = store.search("relevant evidence", limit=6)
+
+    assert [hit.ordinal for hit in hits] == [1, 2]
+    assert hits[0].score == 0.95
+    assert hits[0].method == "vector"

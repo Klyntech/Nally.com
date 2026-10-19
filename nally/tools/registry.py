@@ -9,12 +9,12 @@ from nally.tools.library_tools import (
 )
 from nally.tools.mcp_client import get_mcp_tools
 from nally.tools.memory_tools import memory_forget, memory_recall, memory_remember
-from nally.tools.shell import run_command
+from nally.tools.shell import run_command, shell_sandbox_available
 from nally.tools.web import fetch, web_search
 
 
 def get_tools():
-    return [
+    tools = [
         memory_remember,
         memory_recall,
         memory_forget,
@@ -22,14 +22,20 @@ def get_tools():
         library_search,
         library_get,
         library_rename,
-        run_command,
-        file_read,
-        file_write,
-        file_list,
-        web_search,
-        fetch,
-        *get_mcp_tools(),
     ]
+    if shell_sandbox_available():
+        tools.append(run_command)
+    tools.extend(
+        [
+            file_read,
+            file_write,
+            file_list,
+            web_search,
+            fetch,
+            *get_mcp_tools(),
+        ]
+    )
+    return tools
 
 
 def get_tools_by_name():

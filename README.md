@@ -2,7 +2,7 @@
 
 Greenfield personal AI assistant.
 
-- **LLM fallback order:** OpenRouter model fallbacks, OpenCode Zen, then NVIDIA NIM as the last resort (`deepseek-ai/deepseek-v4-flash` by default)
+- **LLM fallback order:** OpenRouter model fallbacks, NVIDIA NIM, then OpenCode Zen (`deepseek-ai/deepseek-v4-flash` by default)
 - **Agent:** Simple LangGraph ReAct with hard limits
 - **Memory:** Postgres from day 1
 - **Tools:** `memory_*`, `run_command`, `file_*`
@@ -10,7 +10,7 @@ Greenfield personal AI assistant.
 
 ## LLM provider fallback
 
-Nally tries providers in this order: OpenRouter and its configured model fallbacks, OpenCode Zen and its model fallbacks, then NVIDIA NIM as the final fallback. Providers without configured API keys are skipped. Configure `NVIDIA_NIM_API_KEY` to enable the last resort; `NVIDIA_NIM_BASE_URL` defaults to `https://integrate.api.nvidia.com/v1`, and `NVIDIA_NIM_MODEL` defaults to `deepseek-ai/deepseek-v4-flash`. NIM uses an OpenAI-compatible chat-completions API, including tool calling where supported by the selected model. This does not change the primary provider.
+Nally tries providers in this order: OpenRouter and its configured model fallbacks, NVIDIA NIM, then OpenCode Zen and its model fallbacks. Providers without configured API keys are skipped. Configure `NVIDIA_NIM_API_KEY` to enable the second-provider fallback; `NVIDIA_NIM_BASE_URL` defaults to `https://integrate.api.nvidia.com/v1`, and `NVIDIA_NIM_MODEL` defaults to `deepseek-ai/deepseek-v4-flash`. NIM uses an OpenAI-compatible chat-completions API, including tool calling where supported by the selected model. This does not change the primary provider.
 
 ## Web search
 

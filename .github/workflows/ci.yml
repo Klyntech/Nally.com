@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "hardening/**"]
   pull_request:
     branches: [main]
 
@@ -23,7 +23,11 @@ jobs:
           cache-dependency-path: requirements.txt
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest ruff
-      - name: Run tests
+      - name: Install bubblewrap for sandbox integration tests
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Compile project
+        run: python -m compileall -q nally tests
+      - name: Run complete test suite
         run: python -m pytest -q
-      - name: Lint search and agent files
-        run: ruff check nally/agent/graph.py nally/tools/web.py nally/tools/registry.py nally/tools/mcp_client.py tests/test_search_fast_path.py tests/test_web_search_providers.py tests/test_mcp_client.py --ignore BLE001
+      - name: Lint complete project
+        run: python -m ruff check . --select E4,E7,E9,F

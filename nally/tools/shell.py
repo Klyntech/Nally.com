@@ -1,56 +1,86 @@
-"""run_command with denylist and timeout."""
+"""Run commands only inside a fail-closed bubblewrap sandbox."""
 from __future__ import annotations
 
-import re
+import os
+import shutil
 import subprocess
 
 from langchain_core.tools import tool
 
 from nally.config import CMD_TIMEOUT, MAX_TOOL_OUTPUT, WORKSPACE
 
-_DENY = [
-    re.compile(r"printenv", re.I),
-    re.compile(r"\benv\b", re.I),
-    re.compile(r"grep\s+-i\s+\S*token", re.I),
-    re.compile(r"grep\s+-i\s+\S*secret", re.I),
-    re.compile(r"grep\s+-i\s+\S*password", re.I),
-    re.compile(r"\bexport\s+\w*KEY", re.I),
-    re.compile(r"\bcat\s+.*/\.env", re.I),
-    re.compile(r"\bpip\s+install", re.I),
-    re.compile(r"\bnpm\s+install", re.I),
-    re.compile(r"\bapt(-get)?\s+install", re.I),
-    re.compile(r"\bdocker\b", re.I),
-    re.compile(r"\brm\s+-rf\s+/", re.I),
-]
+_SANDBOX_AVAILABLE: bool | None = None
 
 
-def _denied(cmd: str) -> str | None:
-    for pat in _DENY:
-        if pat.search(cmd):
-            return f"Command blocked by policy: matches {pat.pattern}"
-    return None
+def _sandbox_argv(bwrap: str, command: str, workspace: str) -> list[str]:
+    """Build a network-isolated sandbox with only runtime files and workspace mounted."""
+    argv = [
+        bwrap,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-all",
+        "--cap-drop",
+        "ALL",
+    ]
+    # Runtime paths are mounted read-only. Do not expose the host root, home, or repo.
+    for path in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"):
+        if os.path.exists(path):
+            argv.extend(["--ro-bind", path, path])
+    argv.extend(
+        [
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/tmp",
+            "--dir",
+            "/workspace",
+            "--bind",
+            workspace,
+            "/workspace",
+            "--chdir",
+            "/workspace",
+            "--setenv",
+            "HOME",
+            "/tmp",
+            "--setenv",
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "/bin/sh",
+            "-lc",
+            command,
+        ]
+    )
+    return argv
 
 
 @tool
 def run_command(command: str) -> str:
-    """Run a shell command inside the workspace sandbox. Prefer other tools when possible.
-    Forbidden: env dumps, secret greps, package installs, docker, destructive root rm.
-    """
+    """Run a command in a network-isolated sandbox; fails closed without bubblewrap."""
     command = (command or "").strip()
     if not command:
         return "Error: empty command"
-    if block := _denied(command):
-        return f"Error: {block}"
+
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        return "Error: isolated command execution unavailable (bubblewrap is not installed)"
 
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(WORKSPACE),
+            _sandbox_argv(bwrap, command, str(WORKSPACE.resolve())),
+            shell=False,
+            cwd="/",
+            env={
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME": "/tmp",
+                "LANG": "C.UTF-8",
+            },
             capture_output=True,
             text=True,
             timeout=CMD_TIMEOUT,
+            check=False,
         )
         out = (proc.stdout or "") + (proc.stderr or "")
         if len(out) > MAX_TOOL_OUTPUT:
@@ -59,4 +89,40 @@ def run_command(command: str) -> str:
     except subprocess.TimeoutExpired:
         return f"Error: command timed out after {CMD_TIMEOUT}s"
     except Exception as e:
-        return f"Error: {e}"
+        # Sandbox setup failures must not fall back to host execution.
+        return f"Error: isolated command execution failed: {type(e).__name__}"
+
+
+
+def shell_sandbox_available(*, refresh: bool = False) -> bool:
+    """Probe isolation once and hide the shell tool if the sandbox cannot start."""
+    global _SANDBOX_AVAILABLE
+    if _SANDBOX_AVAILABLE is not None and not refresh:
+        return _SANDBOX_AVAILABLE
+
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        _SANDBOX_AVAILABLE = False
+        return False
+
+    try:
+        WORKSPACE.mkdir(parents=True, exist_ok=True)
+        probe = subprocess.run(
+            _sandbox_argv(bwrap, "true", str(WORKSPACE.resolve())),
+            shell=False,
+            cwd="/",
+            env={
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME": "/tmp",
+                "LANG": "C.UTF-8",
+            },
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        _SANDBOX_AVAILABLE = probe.returncode == 0
+    except Exception:
+        # A failed probe means the tool stays unavailable; never fall back to host execution.
+        _SANDBOX_AVAILABLE = False
+    return _SANDBOX_AVAILABLE

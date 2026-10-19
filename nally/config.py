@@ -1,6 +1,7 @@
 """Nally.com configuration — env only."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -30,7 +31,7 @@ OPENCODE_FALLBACK_MODELS = [
     if m.strip()
 ]
 
-# NVIDIA NIM (last-resort LLM fallback)
+# NVIDIA NIM (second-provider fallback before OpenCode Zen)
 NVIDIA_NIM_API_KEY = os.getenv("NVIDIA_NIM_API_KEY", "")
 NVIDIA_NIM_BASE_URL = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
 NVIDIA_NIM_MODEL = os.getenv("NVIDIA_NIM_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
@@ -54,8 +55,33 @@ NVIDIA_EMBED_DIM = int(os.getenv("NVIDIA_EMBED_DIM", "2048"))
 LIBRARY_DEFAULT_JURISDICTION = os.getenv("LIBRARY_DEFAULT_JURISDICTION", "").strip()
 LIBRARY_MAX_UPLOAD_MB = int(os.getenv("LIBRARY_MAX_UPLOAD_MB", "20"))
 
-# Auth
-ACCESS_TOKEN = os.getenv("NALLY_ACCESS_TOKEN", "")
+# Auth. NALLY_ACCESS_TOKENS is a JSON object mapping principal names to bearer tokens.
+# The legacy single token remains supported as one shared principal.
+ACCESS_TOKEN = os.getenv("NALLY_ACCESS_TOKEN", "").strip()
+_raw_access_tokens = os.getenv("NALLY_ACCESS_TOKENS", "").strip()
+if _raw_access_tokens:
+    try:
+        _parsed_access_tokens = json.loads(_raw_access_tokens)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("NALLY_ACCESS_TOKENS must be a JSON object") from exc
+    if not isinstance(_parsed_access_tokens, dict) or not _parsed_access_tokens:
+        raise RuntimeError("NALLY_ACCESS_TOKENS must be a non-empty JSON object")
+    if any(
+        not isinstance(principal, str)
+        or not principal.strip()
+        or not isinstance(token, str)
+        or not token.strip()
+        for principal, token in _parsed_access_tokens.items()
+    ):
+        raise RuntimeError("NALLY_ACCESS_TOKENS keys and values must be non-empty strings")
+    ACCESS_TOKENS = {
+        principal.strip(): token.strip()
+        for principal, token in _parsed_access_tokens.items()
+    }
+    if len(set(ACCESS_TOKENS.values())) != len(ACCESS_TOKENS):
+        raise RuntimeError("NALLY_ACCESS_TOKENS must not reuse a token for multiple principals")
+else:
+    ACCESS_TOKENS: dict[str, str] = {}
 
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "")

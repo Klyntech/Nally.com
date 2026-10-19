@@ -63,9 +63,10 @@ _RENAME_USAGE = (
 
 
 def _allowed(user_id: int | None) -> bool:
-    if not TELEGRAM_USER_ID:
-        return True
-    return user_id is not None and int(user_id) == int(TELEGRAM_USER_ID)
+    """Fail closed when no Telegram account has been explicitly authorized."""
+    if not TELEGRAM_USER_ID or user_id is None:
+        return False
+    return int(user_id) == int(TELEGRAM_USER_ID)
 
 
 def _parse_ingest_caption(caption: str | None, filename: str) -> dict[str, str]:
@@ -443,6 +444,10 @@ def build_application() -> Optional[Application]:
 
 
 async def setup_telegram(application: Application, webhook_url: str | None) -> None:
+    if webhook_url and not TELEGRAM_WEBHOOK_SECRET.strip():
+        raise RuntimeError(
+            "TELEGRAM_WEBHOOK_SECRET is required when configuring Telegram webhook mode"
+        )
     await application.initialize()
     await application.start()
     if webhook_url:
@@ -450,8 +455,7 @@ async def setup_telegram(application: Application, webhook_url: str | None) -> N
         if not url.endswith("/telegram/webhook"):
             url = f"{url}/telegram/webhook"
         kwargs = {"url": url, "drop_pending_updates": False}
-        if TELEGRAM_WEBHOOK_SECRET:
-            kwargs["secret_token"] = TELEGRAM_WEBHOOK_SECRET
+        kwargs["secret_token"] = TELEGRAM_WEBHOOK_SECRET.strip()
         await application.bot.set_webhook(**kwargs)
         logger.info("Telegram webhook set: %s", url)
     else:

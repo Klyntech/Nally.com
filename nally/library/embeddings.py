@@ -91,7 +91,17 @@ def embed_texts(
 
 
 def embed_query(text: str) -> list[float]:
-    return embed_texts([text], input_type="query")[0]
+    """Embed one search query quickly so vector outages cannot exhaust agent time.
+
+    Passage ingestion keeps the longer retry policy. Interactive retrieval gets one
+    short attempt and falls back to full-text search when the provider is unhealthy.
+    """
+    return embed_texts(
+        [text],
+        input_type="query",
+        timeout_s=8.0,
+        max_retries=0,
+    )[0]
 
 
 def embed_passages(texts: list[str], *, batch_size: int = 16) -> list[list[float]]:
