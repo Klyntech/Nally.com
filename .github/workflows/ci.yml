@@ -23,6 +23,8 @@ jobs:
           cache-dependency-path: requirements.txt
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest ruff
+      - name: Install bubblewrap for sandbox integration tests
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Compile project
         run: python -m compileall -q nally tests
       - name: Run complete test suite
