@@ -54,6 +54,7 @@ def library_search(query: str, limit: int = 6, document_slug: str = "") -> str:
             excerpt = excerpt[:1200] + "…"
         blocks.append(
             f"[{i}] {h.document_title} · {h.section_label or 'passage'} "
+            f"[source:{h.document_slug}#chunk-{h.ordinal}] "
             f"(score={h.score:.3f}, via={h.method})\n{excerpt}"
         )
     return "\n\n".join(blocks)
@@ -80,7 +81,10 @@ def library_get(document_slug: str, section_query: str = "", limit: int = 3) -> 
         body = r["content"]
         if len(body) > 2000:
             body = body[:2000] + "…"
-        blocks.append(f"{r['title']} · {r['section_label']}\n{body}")
+        blocks.append(
+            f"{r['title']} · {r['section_label']} "
+            f"[source:{r['slug']}#chunk-{r['ordinal']}]\n{body}"
+        )
     return "\n\n".join(blocks)
 
 
