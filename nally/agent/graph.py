@@ -286,7 +286,7 @@ _DIRECT_SEARCH_RE = re.compile(
 )
 
 
-_LIBRARY_SOURCE_RE = re.compile(r"\\[source:([a-zA-Z0-9_-]+#chunk-\\d+)\\]")
+_LIBRARY_SOURCE_RE = re.compile(r"\[source:([a-zA-Z0-9_-]+#chunk-\d+)\]")
 
 
 def _append_library_citations(reply: str, messages: list[BaseMessage]) -> str:
@@ -304,8 +304,8 @@ def _append_library_citations(reply: str, messages: list[BaseMessage]) -> str:
             if not match:
                 continue
             label = line.split("[source:", 1)[0].strip()
-            label = re.sub(r"^\\[\\d+\\]\\s*", "", label)
-            label = re.sub(r"\\s+\\(score=.*$", "", label)
+            label = re.sub(r"^\[\d+\]\s*", "", label)
+            label = re.sub(r"\s+\(score=.*$", "", label)
             sources.setdefault(match.group(1), label or match.group(1))
 
     if not sources or "Library sources:" in reply:
@@ -313,7 +313,7 @@ def _append_library_citations(reply: str, messages: list[BaseMessage]) -> str:
     citation_lines = [
         f"- [source:{source_id}] {label}" for source_id, label in sources.items()
     ]
-    return f"{reply.rstrip()}\\n\\nLibrary sources:\\n" + "\\n".join(citation_lines)
+    return f"{reply.rstrip()}\n\nLibrary sources:\n" + "\n".join(citation_lines)
 
 
 def _direct_search_query(user_text: str) -> str | None:
