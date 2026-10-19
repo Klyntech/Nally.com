@@ -128,11 +128,12 @@ def test_shell_argv_enables_namespace_isolation_and_never_mounts_host_root(tmp_p
     assert "--unshare-all" in argv
     assert "--die-with-parent" in argv
     assert "--cap-drop" in argv
-    assert ["--bind", str(tmp_path), "/workspace"] == [
+    workspace_bind = next(
         argv[index : index + 3]
         for index, item in enumerate(argv)
         if item == "--bind"
-    ][0]
+    )
+    assert workspace_bind == ["--bind", str(tmp_path), "/workspace"]
     assert not any(
         argv[index : index + 3] == ["--bind", "/", "/"]
         for index, item in enumerate(argv)
