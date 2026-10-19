@@ -13,6 +13,7 @@ shell = importlib.import_module("nally.tools.shell")
 
 def test_api_auth_fails_closed_when_token_is_unconfigured(monkeypatch) -> None:
     monkeypatch.setattr(api, "ACCESS_TOKEN", "")
+    monkeypatch.setattr(api, "ACCESS_TOKENS", {})
 
     with pytest.raises(HTTPException) as exc:
         api.require_auth("Bearer anything")
@@ -48,6 +49,19 @@ def test_api_sessions_are_namespaced_by_identity() -> None:
     assert first != second
     assert first.startswith("api:identity-one:")
     assert second.startswith("api:identity-two:")
+
+
+def test_distinct_bearer_tokens_map_to_distinct_principals(monkeypatch) -> None:
+    monkeypatch.setattr(api, "ACCESS_TOKEN", "")
+    monkeypatch.setattr(
+        api, "ACCESS_TOKENS", {"alice": "alice-secret", "bob": "bob-secret"}
+    )
+
+    alice = api.require_auth("Bearer alice-secret")
+    bob = api.require_auth("Bearer bob-secret")
+
+    assert alice != bob
+    assert api._api_session_id(alice, "default") != api._api_session_id(bob, "default")
 
 
 def test_telegram_webhook_fails_closed_when_secret_is_unconfigured(monkeypatch) -> None:
