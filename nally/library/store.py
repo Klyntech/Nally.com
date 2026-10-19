@@ -55,6 +55,7 @@ class SearchHit:
     content: str
     score: float
     method: str
+    ordinal: int = 0
 
 
 def _slugify(value: str) -> str:
@@ -353,9 +354,9 @@ class LibraryStore:
         except EmbeddingError as exc:
             logger.warning("Vector search unavailable: %s", exc)
 
-        merged: dict[tuple[int, str, str], SearchHit] = {}
+        merged: dict[tuple[int, int], SearchHit] = {}
         for hit in fts_hits + vec_hits:
-            key = (hit.document_id, hit.section_label, hit.content[:80])
+            key = (hit.document_id, hit.ordinal)
             prev = merged.get(key)
             if prev is None or hit.score > prev.score:
                 merged[key] = hit
@@ -373,7 +374,7 @@ class LibraryStore:
         else:
             params = [query, query, limit]
         sql = f"""
-            SELECT d.id, d.title, d.slug, c.section_label, c.content,
+            SELECT d.id, d.title, d.slug, c.section_label, c.content, c.ordinal,
                    ts_rank_cd(c.tsv, plainto_tsquery('english', %s)) AS rank
             FROM library_chunks c
             JOIN library_documents d ON d.id = c.document_id
@@ -391,8 +392,9 @@ class LibraryStore:
                 document_slug=r[2],
                 section_label=r[3] or "",
                 content=r[4],
-                score=float(r[5] or 0) + 0.15,
+                score=float(r[6] or 0) + 0.15,
                 method="fts",
+                ordinal=int(r[5]),
             )
             for r in rows
         ]
@@ -410,7 +412,7 @@ class LibraryStore:
             slug_clause = "AND d.slug = %s"
             params.append(document_slug)
         sql = f"""
-            SELECT d.id, d.title, d.slug, c.section_label, c.content, c.embedding
+            SELECT d.id, d.title, d.slug, c.section_label, c.content, c.ordinal, c.embedding
             FROM library_chunks c
             JOIN library_documents d ON d.id = c.document_id
             WHERE c.embedding IS NOT NULL
@@ -421,7 +423,7 @@ class LibraryStore:
 
         scored: list[SearchHit] = []
         for r in rows:
-            emb = r[5]
+            emb = r[6]
             if isinstance(emb, str):
                 emb = json.loads(emb)
             if not isinstance(emb, list):
@@ -436,6 +438,7 @@ class LibraryStore:
                     content=r[4],
                     score=score,
                     method="vector",
+                    ordinal=int(r[5]),
                 )
             )
         scored.sort(key=lambda h: h.score, reverse=True)
