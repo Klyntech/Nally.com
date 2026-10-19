@@ -308,12 +308,18 @@ def _append_library_citations(reply: str, messages: list[BaseMessage]) -> str:
             label = re.sub(r"\s+\(score=.*$", "", label)
             sources.setdefault(match.group(1), label or match.group(1))
 
-    if not sources or "Library sources:" in reply:
+    missing = {
+        source_id: label
+        for source_id, label in sources.items()
+        if f"[source:{source_id}]" not in reply
+    }
+    if not missing:
         return reply
+    heading = "Additional library sources:" if "Library sources:" in reply else "Library sources:"
     citation_lines = [
-        f"- [source:{source_id}] {label}" for source_id, label in sources.items()
+        f"- [source:{source_id}] {label}" for source_id, label in missing.items()
     ]
-    return f"{reply.rstrip()}\n\nLibrary sources:\n" + "\n".join(citation_lines)
+    return f"{reply.rstrip()}\n\n{heading}\n" + "\n".join(citation_lines)
 
 
 def _direct_search_query(user_text: str) -> str | None:
