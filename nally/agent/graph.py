@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Annotated, Any, Callable, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.messages import (
     AIMessage,
