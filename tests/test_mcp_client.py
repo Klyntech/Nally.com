@@ -200,3 +200,84 @@ def test_wildcard_is_only_allowed_with_restrictive_policies() -> None:
     assert _tool_is_allowlisted(neon, "list_projects")
     assert not _tool_allowed_by_policy(neon, "create_branch")
     assert not _tool_is_allowlisted(unrestricted, "anything")
+
+
+def test_mcp_invocation_rejects_tools_outside_allowlist() -> None:
+    config = load_server_configs(
+        '[{"name":"docs","transport":"streamable_http","url":"https://example.test/mcp",'
+        '"policy":"none","allowed_tools":["read_doc"]}]'
+    )[0]
+    tool = MCPTool(
+        config,
+        SimpleNamespace(
+            name="write_doc",
+            description="Write a document",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+    )
+
+    with pytest.raises(PermissionError, match="not allow-listed"):
+        tool.invoke({})
+
+
+def test_mcp_invocation_converts_timeout_to_safe_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import nally.tools.mcp_client as mcp_client
+
+    config = load_server_configs(
+        '[{"name":"docs","transport":"streamable_http","url":"https://example.test/mcp",'
+        '"enabled":true,"allowed_tools":["read_doc"],"timeout_seconds":0.5}]'
+    )[0]
+    tool = MCPTool(
+        config,
+        SimpleNamespace(
+            name="read_doc",
+            description="Read a document",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+    )
+
+    def timeout(operation, *, timeout):
+        operation.close()
+        raise TimeoutError("simulated timeout")
+
+    monkeypatch.setattr(mcp_client, "_run_async", timeout)
+
+    with pytest.raises(RuntimeError, match="timed out after 0.5s"):
+        tool.invoke({})
+
+
+def test_discovery_failure_does_not_hide_tools_from_healthy_servers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import nally.tools.mcp_client as mcp_client
+
+    configs = load_server_configs(
+        '[{"name":"broken","transport":"stdio","command":"example","enabled":true,'
+        '"allowed_tools":["read_doc"]},'
+        '{"name":"healthy","transport":"stdio","command":"example","enabled":true,'
+        '"allowed_tools":["read_doc"]}]'
+    )
+    healthy_tool = MCPTool(
+        configs[1],
+        SimpleNamespace(
+            name="read_doc",
+            description="Read a document",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+    )
+
+    monkeypatch.setattr(mcp_client, "load_server_configs", lambda: configs)
+    monkeypatch.setattr(mcp_client, "_discover_server", lambda config: config)
+
+    def fake_run_async(operation, timeout):
+        if operation.name == "broken":
+            raise RuntimeError("simulated discovery failure")
+        return [healthy_tool]
+
+    monkeypatch.setattr(mcp_client, "_run_async", fake_run_async)
+    reset_mcp_tool_cache()
+
+    tools = get_mcp_tools(refresh=True)
+
+    assert [tool.name for tool in tools] == [healthy_tool.name]
+    reset_mcp_tool_cache()
