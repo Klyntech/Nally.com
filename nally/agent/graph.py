@@ -316,9 +316,16 @@ def _append_library_citations(reply: str, messages: list[BaseMessage]) -> str:
     if not missing:
         return reply
     heading = "Additional library sources:" if "Library sources:" in reply else "Library sources:"
+    # Keep the safety net useful without dumping every retrieval hit into the answer.
+    # The model should cite claim-level sources in its prose; this list is only a fallback.
     citation_lines = [
-        f"- [source:{source_id}] {label}" for source_id, label in missing.items()
+        f"- [source:{source_id}] {label}"
+        for source_id, label in list(missing.items())[:4]
     ]
+    if len(missing) > len(citation_lines):
+        citation_lines.append(
+            f"- {len(missing) - len(citation_lines)} additional retrieved source(s) omitted"
+        )
     return f"{reply.rstrip()}\n\n{heading}\n" + "\n".join(citation_lines)
 
 
