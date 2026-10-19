@@ -20,6 +20,14 @@ def test_real_sandbox_writes_workspace_and_hides_host_tmp(monkeypatch, tmp_path)
     workspace_result = shell.run_command.invoke(
         {"command": "printf 'sandbox-ok' > proof.txt && cat proof.txt"}
     )
+    if (
+        "Failed RTM_NEWADDR: Operation not permitted" in workspace_result
+        or "setting up uid map: Permission denied" in workspace_result
+    ):
+        pytest.skip(
+            "The CI host blocks bubblewrap namespaces; command execution failed closed"
+        )
+
     isolation_result = shell.run_command.invoke(
         {"command": f"test ! -e '{host_secret}' && echo isolated"}
     )
