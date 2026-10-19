@@ -63,9 +63,10 @@ _RENAME_USAGE = (
 
 
 def _allowed(user_id: int | None) -> bool:
-    if not TELEGRAM_USER_ID:
-        return True
-    return user_id is not None and int(user_id) == int(TELEGRAM_USER_ID)
+    """Fail closed when no Telegram account has been explicitly authorized."""
+    if not TELEGRAM_USER_ID or user_id is None:
+        return False
+    return int(user_id) == int(TELEGRAM_USER_ID)
 
 
 def _parse_ingest_caption(caption: str | None, filename: str) -> dict[str, str]:
