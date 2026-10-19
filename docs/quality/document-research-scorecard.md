@@ -38,3 +38,5 @@ The CI suite includes regression tests for:
 - API auth, Telegram webhook secret enforcement, workspace containment, and fail-closed shell isolation.
 
 These are automated regression checks, not yet a measured 30-task factuality benchmark. Do not report task completion, factual accuracy, production latency, or provider cost as measured until the evaluation dataset and production telemetry exist.
+
+The hosted CI runner currently blocks Bubblewrap namespace setup with `RTM_NEWADDR: Operation not permitted`. In that environment, the real sandbox integration test verifies fail-closed behavior and skips the filesystem-isolation assertions. The argument-level regression tests still run, but a deployment smoke test on a host that permits Bubblewrap namespaces is required before claiming that the shell sandbox is operational.
