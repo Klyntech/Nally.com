@@ -443,19 +443,18 @@ def build_application() -> Optional[Application]:
 
 
 async def setup_telegram(application: Application, webhook_url: str | None) -> None:
+    if webhook_url and not TELEGRAM_WEBHOOK_SECRET.strip():
+        raise RuntimeError(
+            "TELEGRAM_WEBHOOK_SECRET is required when configuring Telegram webhook mode"
+        )
     await application.initialize()
     await application.start()
     if webhook_url:
-        if not TELEGRAM_WEBHOOK_SECRET.strip():
-            raise RuntimeError(
-                "TELEGRAM_WEBHOOK_SECRET is required when configuring Telegram webhook mode"
-            )
         url = webhook_url.rstrip("/")
         if not url.endswith("/telegram/webhook"):
             url = f"{url}/telegram/webhook"
         kwargs = {"url": url, "drop_pending_updates": False}
-        if TELEGRAM_WEBHOOK_SECRET:
-            kwargs["secret_token"] = TELEGRAM_WEBHOOK_SECRET
+        kwargs["secret_token"] = TELEGRAM_WEBHOOK_SECRET.strip()
         await application.bot.set_webhook(**kwargs)
         logger.info("Telegram webhook set: %s", url)
     else:
