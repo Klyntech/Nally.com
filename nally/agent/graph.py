@@ -26,6 +26,7 @@ from nally.agent.progress import (
     set_progress_callback,
 )
 from nally.agent.prompts import SYSTEM_PROMPT
+from nally.agent.harness import build_harness_guidance, harness_enabled
 from nally.config import MAX_ITERATIONS, MAX_TOOL_CALLS, MAX_WALL_TIME
 from nally.core.logging import logger
 from nally.tools.memory_tools import get_memory_store, memory_session
@@ -359,7 +360,7 @@ def run_agent(
 
 def _run_agent_inner(user_text: str, stable_session_id: str) -> str:
     query = _direct_search_query(user_text)
-    if query:
+    if query and not harness_enabled():
         started = time.monotonic()
         logger.info("direct web search started query=%r max_results=4", query[:160])
         emit_progress(
@@ -401,6 +402,11 @@ def _run_agent_inner(user_text: str, stable_session_id: str) -> str:
 
     graph = get_graph()
     messages: list[BaseMessage] = [SystemMessage(content=SYSTEM_PROMPT)]
+    if harness_enabled():
+        guidance = build_harness_guidance(user_text)
+        messages.append(SystemMessage(content=guidance))
+        profile = guidance.splitlines()[1] if len(guidance.splitlines()) > 1 else "unknown"
+        logger.info("Harness enabled: %s", profile)
     memory_context = _load_memory_context(stable_session_id, query=user_text)
     if memory_context:
         messages.append(SystemMessage(content=memory_context))
