@@ -286,6 +286,36 @@ _DIRECT_SEARCH_RE = re.compile(
 )
 
 
+_LIBRARY_SOURCE_RE = re.compile(r"\\[source:([a-zA-Z0-9_-]+#chunk-\\d+)\\]")
+
+
+def _append_library_citations(reply: str, messages: list[BaseMessage]) -> str:
+    """Preserve stable document/chunk references when the model omits them."""
+    sources: dict[str, str] = {}
+    for message in messages:
+        if not isinstance(message, ToolMessage) or message.name not in {
+            "library_search",
+            "library_get",
+        }:
+            continue
+        content = message.content if isinstance(message.content, str) else ""
+        for line in content.splitlines():
+            match = _LIBRARY_SOURCE_RE.search(line)
+            if not match:
+                continue
+            label = line.split("[source:", 1)[0].strip()
+            label = re.sub(r"^\\[\\d+\\]\\s*", "", label)
+            label = re.sub(r"\\s+\\(score=.*$", "", label)
+            sources.setdefault(match.group(1), label or match.group(1))
+
+    if not sources or "Library sources:" in reply:
+        return reply
+    citation_lines = [
+        f"- [source:{source_id}] {label}" for source_id, label in sources.items()
+    ]
+    return f"{reply.rstrip()}\\n\\nLibrary sources:\\n" + "\\n".join(citation_lines)
+
+
 def _direct_search_query(user_text: str) -> str | None:
     """Recognize explicit, standalone search requests that do not need an LLM."""
     match = _DIRECT_SEARCH_RE.match(user_text or "")
@@ -378,6 +408,8 @@ def _run_agent_inner(user_text: str, stable_session_id: str) -> str:
         if isinstance(m, AIMessage) and (m.content or "").strip():
             reply = m.content
             break
+
+    reply = _append_library_citations(reply, final["messages"])
 
     try:
         get_memory_store().save_turn(user_text, reply, session_id=stable_session_id)
