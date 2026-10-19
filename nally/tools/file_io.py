@@ -9,10 +9,19 @@ from nally.config import MAX_TOOL_OUTPUT, WORKSPACE
 
 
 def _safe(path: str) -> Path:
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
-    target = (WORKSPACE / path).resolve()
-    if not str(target).startswith(str(WORKSPACE)):
-        raise ValueError("Path escapes workspace")
+    """Resolve a workspace-relative path and reject traversal and symlink escapes."""
+    root = WORKSPACE.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    requested = Path(path or ".")
+    if requested.is_absolute():
+        raise ValueError("Absolute paths are not allowed")
+
+    target = (root / requested).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Path escapes workspace") from exc
     return target
 
 
@@ -37,6 +46,8 @@ def file_write(path: str, content: str) -> str:
     try:
         p = _safe(path)
         p.parent.mkdir(parents=True, exist_ok=True)
+        # Re-check after creating parent directories to catch symlinked parents.
+        p = _safe(path)
         p.write_text(content or "", encoding="utf-8")
         return f"Wrote {len(content or '')} bytes to {path}"
     except Exception as e:
@@ -54,6 +65,11 @@ def file_list(path: str = ".") -> str:
             return f"FILE {path}"
         lines = []
         for child in sorted(p.iterdir()):
+            # Do not follow an escaped symlink when listing entries.
+            try:
+                child.resolve().relative_to(WORKSPACE.resolve())
+            except ValueError:
+                continue
             kind = "DIR " if child.is_dir() else "FILE"
             lines.append(f"{kind} {child.name}")
         return "\n".join(lines) if lines else "(empty)"
