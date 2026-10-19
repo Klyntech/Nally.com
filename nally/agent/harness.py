@@ -51,7 +51,7 @@ _MODE_PATTERNS: tuple[tuple[TaskMode, re.Pattern[str]], ...] = (
     (
         "analysis",
         re.compile(
-            r"\\b(?:analy[sz]e|analysis|audit|review|inspect|assess|evaluate|examine|interpret)\\b",
+            r"\b(?:analy[sz]e|analysis|audit|review|inspect|assess|evaluate|examine|interpret)\b",
             re.IGNORECASE,
         ),
     ),
