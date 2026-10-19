@@ -145,3 +145,61 @@ def test_automatic_history_redacts_sensitive_assignments() -> None:
     assert "example_value" not in cleaned
     assert "another_value" not in cleaned
     assert "token=[REDACTED]" in cleaned
+
+
+class SessionScopedFakeMemoryStore:
+    def __init__(self) -> None:
+        self.facts = {
+            "api:alice:default": "- project: Alice-only",
+            "api:bob:default": "- project: Bob-only",
+        }
+        self.turns = {
+            "api:alice:default": [
+                {"user": "Alice private question", "assistant": "Alice private answer"}
+            ],
+            "api:bob:default": [
+                {"user": "Bob private question", "assistant": "Bob private answer"}
+            ],
+        }
+
+    def recall(self, key=None, session_id="default", limit=20):
+        return self.facts.get(session_id, "No memories stored.")
+
+    def recall_recent_turns(self, session_id="default", limit=10):
+        return self.turns.get(session_id, [])[-limit:]
+
+    def search_turns(self, query, session_id="default", limit=5):
+        return []
+
+
+def test_facts_and_conversation_history_use_separate_context_sections(monkeypatch) -> None:
+    store = FakeMemoryStore(
+        memories="- preferred_jurisdiction: Nigeria",
+        turns=[{"user": "What did I ask?", "assistant": "You asked about evidence."}],
+    )
+    monkeypatch.setattr(graph, "get_memory_store", lambda: store)
+
+    context = graph._load_memory_context("api:alice:default")
+
+    assert "<memory>" in context
+    assert "preferred_jurisdiction: Nigeria" in context
+    assert "<conversation_history>" in context
+    assert "What did I ask?" in context
+    assert "You asked about evidence." in context
+
+
+def test_memory_context_does_not_cross_api_principal_sessions(monkeypatch) -> None:
+    store = SessionScopedFakeMemoryStore()
+    monkeypatch.setattr(graph, "get_memory_store", lambda: store)
+
+    alice_context = graph._load_memory_context("api:alice:default")
+    bob_context = graph._load_memory_context("api:bob:default")
+
+    assert "Alice-only" in alice_context
+    assert "Alice private answer" in alice_context
+    assert "Bob-only" not in alice_context
+    assert "Bob private answer" not in alice_context
+    assert "Bob-only" in bob_context
+    assert "Bob private answer" in bob_context
+    assert "Alice-only" not in bob_context
+    assert "Alice private answer" not in bob_context
