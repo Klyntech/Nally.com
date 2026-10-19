@@ -11,6 +11,7 @@ from fastapi import HTTPException
 api = importlib.import_module("nally.api.app")
 file_io = importlib.import_module("nally.tools.file_io")
 shell = importlib.import_module("nally.tools.shell")
+registry = importlib.import_module("nally.tools.registry")
 telegram_bot = importlib.import_module("nally.telegram.bot")
 
 
@@ -172,3 +173,16 @@ def test_webhook_setup_rejects_missing_secret_before_starting_application(monkey
 
     application.initialize.assert_not_awaited()
     application.start.assert_not_awaited()
+
+
+
+def test_shell_tool_is_not_advertised_when_sandbox_probe_fails(monkeypatch) -> None:
+    monkeypatch.setattr(registry, "shell_sandbox_available", lambda: False)
+
+    assert "run_command" not in {tool.name for tool in registry.get_tools()}
+
+
+def test_shell_tool_is_advertised_only_after_sandbox_probe_succeeds(monkeypatch) -> None:
+    monkeypatch.setattr(registry, "shell_sandbox_available", lambda: True)
+
+    assert "run_command" in {tool.name for tool in registry.get_tools()}
