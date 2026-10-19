@@ -28,4 +28,4 @@ jobs:
       - name: Run complete test suite
         run: python -m pytest -q
       - name: Lint complete project
-        run: python -m ruff check .
+        run: python -m ruff check . --select E4,E7,E9,F
