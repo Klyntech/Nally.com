@@ -21,6 +21,11 @@ def test_current_information_uses_research_mode() -> None:
     assert profile.mode == "research"
 
 
+def test_repository_analysis_uses_analysis_mode() -> None:
+    profile = classify_task("Analyze my repo and identify architectural risks.")
+    assert profile.mode == "analysis"
+
+
 def test_creation_request_uses_creation_mode() -> None:
     profile = classify_task("Draft a concise project proposal for this feature.")
     assert profile.mode == "creation"
