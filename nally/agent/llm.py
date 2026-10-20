@@ -122,13 +122,24 @@ def _msg_id() -> str:
     return "msg_" + secrets.token_hex(12)
 
 
-def _openrouter_client() -> OpenAI | None:
+def _openrouter_client(timeout: float = 60.0) -> OpenAI | None:
     if not OPENROUTER_API_KEY:
         return None
-    return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY, timeout=60.0)
+    # Bound client timeout; caller may pass a tighter remaining-budget value.
+    return OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=OPENROUTER_API_KEY,
+        timeout=max(1.0, min(float(timeout), 60.0)),
+    )
 
 
-def _call_openrouter(client: OpenAI, model: str, messages: list, tools: list | None):
+def _call_openrouter(
+    client: OpenAI,
+    model: str,
+    messages: list,
+    tools: list | None,
+    timeout: float | None = None,
+):
     kwargs: dict = {
         "model": model,
         "messages": messages,
@@ -141,6 +152,9 @@ def _call_openrouter(client: OpenAI, model: str, messages: list, tools: list | N
     m = model.lower()
     if any(x in m for x in ("lightning", "reasoning", "nemotron-3.5")):
         kwargs["extra_body"] = {"reasoning": {"enabled": bool(OPENROUTER_REASONING)}}
+    if timeout is not None:
+        # openai client also accepts per-request timeout
+        kwargs["timeout"] = max(1.0, float(timeout))
     return client.chat.completions.create(**kwargs)
 
 
@@ -155,7 +169,12 @@ def _merge_zen_tools(tools: list | None) -> list:
     return out
 
 
-def _call_opencode_zen(model: str, messages: list, tools: list | None):
+def _call_opencode_zen(
+    model: str,
+    messages: list,
+    tools: list | None,
+    timeout: float | None = None,
+):
     """Zen free tier: stream=true + opencode headers + required tools; aggregate SSE."""
     if not OPENCODE_API_KEY:
         raise RuntimeError("OPENCODE_API_KEY not set")
@@ -184,8 +203,10 @@ def _call_opencode_zen(model: str, messages: list, tools: list | None):
 
     content_parts: list[str] = []
     tool_acc: dict[int, dict] = {}
+    # Cap at 90s historical default; caller may tighten to remaining wall budget.
+    request_timeout = max(1.0, min(float(timeout) if timeout is not None else 90.0, 90.0))
 
-    with httpx.Client(timeout=90.0) as client:
+    with httpx.Client(timeout=request_timeout) as client:
         with client.stream("POST", url, headers=headers, json=body) as resp:
             if resp.status_code >= 400:
                 text = resp.read().decode(errors="replace")
@@ -244,15 +265,21 @@ def _call_opencode_zen(model: str, messages: list, tools: list | None):
     return SimpleNamespace(choices=[choice], model=model)
 
 
-def _call_nvidia_nim(messages: list, tools: list | None, model: str | None = None):
+def _call_nvidia_nim(
+    messages: list,
+    tools: list | None,
+    model: str | None = None,
+    timeout: float | None = None,
+):
     """Call NVIDIA NIM through its OpenAI-compatible hosted endpoint."""
     if not NVIDIA_NIM_API_KEY:
         raise RuntimeError("NVIDIA_NIM_API_KEY not set")
 
+    request_timeout = max(1.0, min(float(timeout) if timeout is not None else 60.0, 60.0))
     client = OpenAI(
         base_url=NVIDIA_NIM_BASE_URL,
         api_key=NVIDIA_NIM_API_KEY,
-        timeout=60.0,
+        timeout=request_timeout,
     )
     kwargs: dict = {
         "model": model or NVIDIA_NIM_MODEL,
@@ -266,13 +293,67 @@ def _call_nvidia_nim(messages: list, tools: list | None, model: str | None = Non
     return client.chat.completions.create(**kwargs)
 
 
-def chat_completion(messages: list, tools: list | None = None, model: str | None = None):
-    """Try OpenRouter, then the known-good NVIDIA NIM fallback, then OpenCode Zen."""
+def chat_completion(
+    messages: list,
+    tools: list | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+):
+    """Try OpenRouter, then the known-good NVIDIA NIM fallback, then OpenCode Zen.
+
+    ``timeout`` is an optional *shared* remaining-budget bound (seconds) for the
+    entire fallback chain. Each attempt uses only the time still left after prior
+    attempts; later providers cannot re-spend the full original budget.
+    Per-operation duration and outcome are logged without secrets or prompts.
+    """
     primary_model = model or MODEL
     last_err: BaseException | None = None
+    # Shared end-to-end deadline for this chat_completion call (all providers).
+    deadline: float | None = None
+    if timeout is not None:
+        if float(timeout) <= 0:
+            raise TimeoutError(f"chat_completion budget already exhausted ({timeout}s)")
+        deadline = time.monotonic() + float(timeout)
+
+    def _remaining() -> float | None:
+        if deadline is None:
+            return None
+        return deadline - time.monotonic()
+
+    def _slice(cap: float) -> float:
+        """Timeout for the next attempt: min(provider cap, remaining budget)."""
+        rem = _remaining()
+        if rem is None:
+            return cap
+        if rem <= 0:
+            raise TimeoutError("chat_completion shared deadline exhausted")
+        # Never start an attempt with less than 0.25s; caller should have stopped.
+        return max(0.25, min(cap, rem))
+
+    def _log_attempt(provider: str, selected_model: str, started: float, ok: bool, err: str = ""):
+        elapsed = time.monotonic() - started
+        if ok:
+            logger.info(
+                "llm_request provider=%s model=%s duration_s=%.2f status=ok",
+                provider,
+                selected_model,
+                elapsed,
+            )
+        else:
+            logger.warning(
+                "llm_request provider=%s model=%s duration_s=%.2f status=error error=%s",
+                provider,
+                selected_model,
+                elapsed,
+                (err or "unknown")[:200],
+            )
 
     # 1) OpenRouter. Skip the rest of this provider on account-wide failures.
-    or_client = _openrouter_client()
+    try:
+        or_timeout = _slice(60.0)
+    except TimeoutError as te:
+        raise te
+    or_client = _openrouter_client(timeout=or_timeout)
     if or_client is not None:
         tried: set[str] = set()
         candidates = [primary_model] + [m for m in FALLBACK_MODELS if m != primary_model]
@@ -281,12 +362,22 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
                 continue
             tried.add(candidate)
             try:
-                resp = _call_openrouter(or_client, candidate, messages, tools)
+                attempt_timeout = _slice(60.0)
+            except TimeoutError:
+                logger.warning("OpenRouter skipped: shared deadline exhausted before model %s", candidate)
+                break
+            started = time.monotonic()
+            try:
+                resp = _call_openrouter(
+                    or_client, candidate, messages, tools, timeout=attempt_timeout
+                )
+                _log_attempt("openrouter", candidate, started, ok=True)
                 if candidate != primary_model:
                     logger.info("OpenRouter fallback model ok: %s", candidate)
                 return resp
             except Exception as exc:
                 last_err = exc
+                _log_attempt("openrouter", candidate, started, ok=False, err=str(exc))
                 scope = _failure_scope(exc)
                 logger.warning(
                     "OpenRouter model %s failed (scope=%s): %s",
@@ -303,11 +394,21 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
     # spending time cycling through Zen models that may be disabled or unfunded.
     if NVIDIA_NIM_API_KEY:
         try:
-            logger.info("Falling back to NVIDIA NIM model: %s", NVIDIA_NIM_MODEL)
-            return _call_nvidia_nim(messages, tools)
-        except Exception as exc:
-            last_err = exc
-            logger.warning("NVIDIA NIM failed: %s", exc)
+            attempt_timeout = _slice(60.0)
+        except TimeoutError:
+            logger.warning("NVIDIA NIM skipped: shared deadline exhausted")
+            attempt_timeout = None
+        if attempt_timeout is not None:
+            started = time.monotonic()
+            try:
+                logger.info("Falling back to NVIDIA NIM model: %s", NVIDIA_NIM_MODEL)
+                resp = _call_nvidia_nim(messages, tools, timeout=attempt_timeout)
+                _log_attempt("nvidia_nim", NVIDIA_NIM_MODEL, started, ok=True)
+                return resp
+            except Exception as exc:
+                last_err = exc
+                _log_attempt("nvidia_nim", NVIDIA_NIM_MODEL, started, ok=False, err=str(exc))
+                logger.warning("NVIDIA NIM failed: %s", exc)
     else:
         logger.warning("NVIDIA_NIM_API_KEY not set; skipping NVIDIA NIM")
 
@@ -330,10 +431,19 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
 
         for candidate in ordered:
             try:
+                attempt_timeout = _slice(90.0)
+            except TimeoutError:
+                logger.warning("OpenCode Zen skipped: shared deadline exhausted before model %s", candidate)
+                break
+            started = time.monotonic()
+            try:
                 logger.info("Falling back to OpenCode Zen model: %s", candidate)
-                return _call_opencode_zen(candidate, messages, tools)
+                resp = _call_opencode_zen(candidate, messages, tools, timeout=attempt_timeout)
+                _log_attempt("opencode_zen", candidate, started, ok=True)
+                return resp
             except Exception as exc:
                 last_err = exc
+                _log_attempt("opencode_zen", candidate, started, ok=False, err=str(exc))
                 scope = _failure_scope(exc)
                 logger.warning(
                     "OpenCode Zen model %s failed (scope=%s): %s",
@@ -346,6 +456,10 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
     else:
         logger.warning("OPENCODE_API_KEY not set; skipping OpenCode Zen")
 
+    if isinstance(last_err, TimeoutError) or (
+        last_err is None and deadline is not None and time.monotonic() >= deadline
+    ):
+        raise TimeoutError("chat_completion shared deadline exhausted")
     raise last_err or RuntimeError(
         "All configured LLM providers failed (OpenRouter, NVIDIA NIM, OpenCode Zen)"
     )

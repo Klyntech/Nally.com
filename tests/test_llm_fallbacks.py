@@ -7,14 +7,14 @@ def test_nvidia_nim_is_tried_before_opencode_models():
     events = []
     response = object()
 
-    def fail_openrouter(*args):
+    def fail_openrouter(*args, **kwargs):
         raise RuntimeError("OpenRouter down")
 
-    def fallback_nim(*args):
+    def fallback_nim(*args, **kwargs):
         events.append("nim")
         return response
 
-    def fail_opencode(*args):
+    def fail_opencode(*args, **kwargs):
         events.append("opencode")
         raise RuntimeError("OpenCode down")
 
@@ -39,8 +39,9 @@ def test_nvidia_nim_is_tried_before_opencode_models():
 def test_provider_quota_failure_stops_openrouter_model_retries():
     calls = []
 
-    def quota_failure(*args):
-        calls.append(args[1])
+    def quota_failure(*args, **kwargs):
+        # args[1] is the model name when called as _call_openrouter(client, model, ...)
+        calls.append(args[1] if len(args) > 1 else kwargs.get("model"))
         raise RuntimeError("HTTP 429 free-models-per-day quota exceeded")
 
     with (
