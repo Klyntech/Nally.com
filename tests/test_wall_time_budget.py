@@ -4,7 +4,6 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from nally.agent import graph as agent_graph
