@@ -266,35 +266,44 @@ def tools_node(state: AgentState) -> dict:
             )
             continue
         # Bound the tool runtime by remaining wall budget (shared across tools in this step).
+        # Do NOT use ThreadPoolExecutor as a context manager around result(timeout=...):
+        # on timeout, __exit__ calls shutdown(wait=True) and would block until the
+        # still-running worker finishes, defeating the hard timeout. Threads cannot
+        # be forcibly cancelled; we abandon the future and return to the agent loop.
         tool_timeout = max(0.25, _remaining_wall_time(state) - 0.25)
         started = time.monotonic()
         status: Literal["ok", "error"] = "ok"
+        pool = ThreadPoolExecutor(max_workers=1)
         try:
             def _invoke():
                 with memory_session(state["session_id"]):
                     return tool.invoke(tc["args"])
 
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_invoke)
+            future = pool.submit(_invoke)
+            try:
                 result = future.result(timeout=tool_timeout)
-            if isinstance(result, str) and result.startswith("Error:"):
+                if isinstance(result, str) and result.startswith("Error:"):
+                    status = "error"
+            except FuturesTimeout:
+                future.cancel()
+                logger.warning(
+                    "Tool timed out name=%s timeout_s=%.2f remaining_wall_s=%.2f",
+                    name,
+                    tool_timeout,
+                    _remaining_wall_time(state),
+                )
+                result = (
+                    f"Error: tool '{name}' exceeded remaining time budget "
+                    f"({tool_timeout:.1f}s)"
+                )
                 status = "error"
-        except FuturesTimeout:
-            logger.warning(
-                "Tool timed out name=%s timeout_s=%.2f remaining_wall_s=%.2f",
-                name,
-                tool_timeout,
-                _remaining_wall_time(state),
-            )
-            result = (
-                f"Error: tool '{name}' exceeded remaining time budget "
-                f"({tool_timeout:.1f}s)"
-            )
-            status = "error"
         except Exception as e:
             logger.exception("Tool failed: %s", name)
             result = f"Error: {e}"
             status = "error"
+        finally:
+            # wait=False so a timed-out worker cannot delay the agent response.
+            pool.shutdown(wait=False, cancel_futures=True)
         elapsed = time.monotonic() - started
         logger.info(
             "tool_call name=%s duration_s=%.2f status=%s remaining_wall_s=%.2f",

@@ -202,3 +202,44 @@ def test_tools_node_times_out_slow_tool():
     assert "exceeded remaining time budget" in str(tool_msgs[0].content).lower() or "budget" in str(
         tool_msgs[0].content
     ).lower()
+
+
+def test_tools_node_returns_within_budget_even_if_worker_still_blocked():
+    """Caller must not wait for a timed-out tool thread to finish.
+
+    ThreadPoolExecutor as a context manager would call shutdown(wait=True) and
+    re-block the agent; this test fails if that regression returns.
+    """
+    from langchain_core.tools import tool
+
+    block_seconds = 4.0
+
+    @tool
+    def blocked_tool(query: str) -> str:
+        """Blocks longer than the allowed tool budget."""
+        time.sleep(block_seconds)
+        return "should-not-be-returned"
+
+    # Leave ~0.8s of wall budget so tool_timeout is under 1s.
+    state = _base_state(
+        started_at=time.time() - (MAX_WALL_TIME - 0.8),
+        messages=[
+            HumanMessage(content="q"),
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "c1", "name": "blocked_tool", "args": {"query": "x"}}],
+            ),
+        ],
+    )
+    t0 = time.monotonic()
+    with patch.object(
+        agent_graph, "get_tools_by_name", return_value={"blocked_tool": blocked_tool}
+    ):
+        out = tools_node(state)
+    elapsed = time.monotonic() - t0
+
+    # Must return well before the blocked worker finishes.
+    assert elapsed < 2.0, f"tools_node blocked for {elapsed:.2f}s; hard timeout not enforced"
+    tool_msgs = [m for m in out["messages"] if isinstance(m, ToolMessage)]
+    assert tool_msgs
+    assert "exceeded remaining time budget" in str(tool_msgs[0].content).lower()
