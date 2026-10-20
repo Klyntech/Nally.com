@@ -28,6 +28,7 @@ from nally.agent.progress import (
 )
 from nally.agent.prompts import SYSTEM_PROMPT
 from nally.agent.harness import build_harness_guidance, harness_enabled
+from nally.agent.tool_guards import check_tool_approval, tracker_for
 from nally.config import MAX_ITERATIONS, MAX_TOOL_CALLS, MAX_WALL_TIME
 from nally.core.logging import logger
 from nally.tools.memory_tools import get_memory_store, memory_session
@@ -263,6 +264,28 @@ def tools_node(state: AgentState) -> dict:
             outputs.append(ToolMessage(content=result, tool_call_id=tc["id"], name=name))
             emit_progress(
                 ProgressEvent(kind="tool_end", tool=name, detail=detail, status="error")
+            )
+            continue
+        # Dangerous-tool approval (opt-in via NALLY_TOOL_APPROVAL).
+        blocked = check_tool_approval(name)
+        if blocked:
+            outputs.append(ToolMessage(content=blocked, tool_call_id=tc["id"], name=name))
+            emit_progress(
+                ProgressEvent(kind="tool_end", tool=name, detail=detail, status="error")
+            )
+            logger.info("tool_approval_blocked name=%s", name)
+            continue
+        # Tool-loop guard: identical tool+args repeating across the run.
+        _repeat_n, loop_msg = tracker_for(state.get("session_id") or "default").observe(
+            name, args
+        )
+        if loop_msg:
+            outputs.append(ToolMessage(content=loop_msg, tool_call_id=tc["id"], name=name))
+            emit_progress(
+                ProgressEvent(kind="tool_end", tool=name, detail=detail, status="error")
+            )
+            logger.info(
+                "tool_loop_guard name=%s repeats=%s", name, _repeat_n
             )
             continue
         # Bound the tool runtime by remaining wall budget (shared across tools in this step).

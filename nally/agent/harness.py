@@ -2,6 +2,9 @@
 
 This module intentionally does not call an LLM. It chooses concise guidance for the
 existing agent; evaluation must establish whether that guidance improves outcomes.
+
+Runtime loop mechanics (tool-loop detection, dangerous-tool approval) live in
+``nally.agent.tool_guards`` and are independent of ``NALLY_HARNESS_ENABLED``.
 """
 from __future__ import annotations
 
