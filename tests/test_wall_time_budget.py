@@ -115,3 +115,90 @@ def test_tools_node_stops_when_budget_exhausted_mid_loop():
         m.content for m in out["messages"] if hasattr(m, "content") and m.content
     )
     assert "budget" in contents.lower() or "could not" in contents.lower()
+
+
+def test_llm_node_skips_call_when_budget_under_half_second():
+    state = _base_state(started_at=time.time() - (MAX_WALL_TIME - 0.2))
+    with patch.object(agent_graph, "chat_completion") as mock_cc:
+        out = llm_node(state)
+    mock_cc.assert_not_called()
+    assert out.get("stop_reason")
+    assert "could not" in out["messages"][0].content.lower()
+
+
+def test_chat_completion_shares_deadline_across_provider_fallbacks():
+    """Later providers must not re-spend the full original timeout."""
+    from nally.agent import llm as llm_mod
+
+    call_timeouts: list[float] = []
+
+    def fail_openrouter(*args, **kwargs):
+        call_timeouts.append(float(kwargs.get("timeout") or 0))
+        time.sleep(0.15)
+        raise RuntimeError("OpenRouter down")
+
+    def fail_nim(*args, **kwargs):
+        call_timeouts.append(float(kwargs.get("timeout") or 0))
+        raise RuntimeError("NIM down")
+
+    def fail_zen(*args, **kwargs):
+        call_timeouts.append(float(kwargs.get("timeout") or 0))
+        raise RuntimeError("Zen down")
+
+    with (
+        patch.object(llm_mod, "MODEL", "primary"),
+        patch.object(llm_mod, "FALLBACK_MODELS", []),
+        patch.object(llm_mod, "_openrouter_client", return_value=object()),
+        patch.object(llm_mod, "_call_openrouter", side_effect=fail_openrouter),
+        patch.object(llm_mod, "NVIDIA_NIM_API_KEY", "nim"),
+        patch.object(llm_mod, "_call_nvidia_nim", side_effect=fail_nim),
+        patch.object(llm_mod, "OPENCODE_API_KEY", "zen"),
+        patch.object(llm_mod, "OPENCODE_MODEL", "zen-m"),
+        patch.object(llm_mod, "OPENCODE_FALLBACK_MODELS", []),
+        patch.object(llm_mod, "_call_opencode_zen", side_effect=fail_zen),
+    ):
+        try:
+            llm_mod.chat_completion(
+                [{"role": "user", "content": "hi"}],
+                timeout=0.4,
+            )
+        except Exception:
+            pass
+
+    assert len(call_timeouts) >= 1
+    # First attempt may get up to ~0.4s; later attempts must be strictly less
+    # than the original budget (shared deadline consumes time).
+    assert call_timeouts[0] <= 0.4 + 0.05
+    if len(call_timeouts) > 1:
+        assert call_timeouts[1] < call_timeouts[0] + 0.01
+
+
+def test_tools_node_times_out_slow_tool():
+    from langchain_core.tools import tool
+
+    @tool
+    def slow_tool(query: str) -> str:
+        """Intentionally slow tool for timeout test."""
+        time.sleep(5)
+        return "done"
+
+    state = _base_state(
+        started_at=time.time() - (MAX_WALL_TIME - 1.0),  # ~1s left
+        messages=[
+            HumanMessage(content="q"),
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "c1", "name": "slow_tool", "args": {"query": "x"}}],
+            ),
+        ],
+    )
+    with (
+        patch.object(agent_graph, "get_tools_by_name", return_value={"slow_tool": slow_tool}),
+    ):
+        out = tools_node(state)
+
+    tool_msgs = [m for m in out["messages"] if isinstance(m, ToolMessage)]
+    assert tool_msgs
+    assert "exceeded remaining time budget" in str(tool_msgs[0].content).lower() or "budget" in str(
+        tool_msgs[0].content
+    ).lower()

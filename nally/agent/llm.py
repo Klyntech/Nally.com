@@ -301,15 +301,34 @@ def chat_completion(
 ):
     """Try OpenRouter, then the known-good NVIDIA NIM fallback, then OpenCode Zen.
 
-    ``timeout`` is an optional remaining-budget bound (seconds). When provided,
-    each provider request is limited to that value (capped by the provider's
-    historical default). Per-operation duration and outcome are logged without
-    secrets or prompt contents.
+    ``timeout`` is an optional *shared* remaining-budget bound (seconds) for the
+    entire fallback chain. Each attempt uses only the time still left after prior
+    attempts; later providers cannot re-spend the full original budget.
+    Per-operation duration and outcome are logged without secrets or prompts.
     """
     primary_model = model or MODEL
     last_err: BaseException | None = None
-    # Hard floor so we never pass a zero/negative timeout to the HTTP client.
-    effective_timeout = max(1.0, float(timeout)) if timeout is not None else None
+    # Shared end-to-end deadline for this chat_completion call (all providers).
+    deadline: float | None = None
+    if timeout is not None:
+        if float(timeout) <= 0:
+            raise TimeoutError(f"chat_completion budget already exhausted ({timeout}s)")
+        deadline = time.monotonic() + float(timeout)
+
+    def _remaining() -> float | None:
+        if deadline is None:
+            return None
+        return deadline - time.monotonic()
+
+    def _slice(cap: float) -> float:
+        """Timeout for the next attempt: min(provider cap, remaining budget)."""
+        rem = _remaining()
+        if rem is None:
+            return cap
+        if rem <= 0:
+            raise TimeoutError("chat_completion shared deadline exhausted")
+        # Never start an attempt with less than 0.25s; caller should have stopped.
+        return max(0.25, min(cap, rem))
 
     def _log_attempt(provider: str, selected_model: str, started: float, ok: bool, err: str = ""):
         elapsed = time.monotonic() - started
@@ -330,7 +349,11 @@ def chat_completion(
             )
 
     # 1) OpenRouter. Skip the rest of this provider on account-wide failures.
-    or_client = _openrouter_client(timeout=effective_timeout or 60.0)
+    try:
+        or_timeout = _slice(60.0)
+    except TimeoutError as te:
+        raise te
+    or_client = _openrouter_client(timeout=or_timeout)
     if or_client is not None:
         tried: set[str] = set()
         candidates = [primary_model] + [m for m in FALLBACK_MODELS if m != primary_model]
@@ -338,10 +361,15 @@ def chat_completion(
             if candidate in tried:
                 continue
             tried.add(candidate)
+            try:
+                attempt_timeout = _slice(60.0)
+            except TimeoutError:
+                logger.warning("OpenRouter skipped: shared deadline exhausted before model %s", candidate)
+                break
             started = time.monotonic()
             try:
                 resp = _call_openrouter(
-                    or_client, candidate, messages, tools, timeout=effective_timeout
+                    or_client, candidate, messages, tools, timeout=attempt_timeout
                 )
                 _log_attempt("openrouter", candidate, started, ok=True)
                 if candidate != primary_model:
@@ -365,16 +393,22 @@ def chat_completion(
     # 2) NVIDIA NIM has been observed healthy in production logs. Try it before
     # spending time cycling through Zen models that may be disabled or unfunded.
     if NVIDIA_NIM_API_KEY:
-        started = time.monotonic()
         try:
-            logger.info("Falling back to NVIDIA NIM model: %s", NVIDIA_NIM_MODEL)
-            resp = _call_nvidia_nim(messages, tools, timeout=effective_timeout)
-            _log_attempt("nvidia_nim", NVIDIA_NIM_MODEL, started, ok=True)
-            return resp
-        except Exception as exc:
-            last_err = exc
-            _log_attempt("nvidia_nim", NVIDIA_NIM_MODEL, started, ok=False, err=str(exc))
-            logger.warning("NVIDIA NIM failed: %s", exc)
+            attempt_timeout = _slice(60.0)
+        except TimeoutError:
+            logger.warning("NVIDIA NIM skipped: shared deadline exhausted")
+            attempt_timeout = None
+        if attempt_timeout is not None:
+            started = time.monotonic()
+            try:
+                logger.info("Falling back to NVIDIA NIM model: %s", NVIDIA_NIM_MODEL)
+                resp = _call_nvidia_nim(messages, tools, timeout=attempt_timeout)
+                _log_attempt("nvidia_nim", NVIDIA_NIM_MODEL, started, ok=True)
+                return resp
+            except Exception as exc:
+                last_err = exc
+                _log_attempt("nvidia_nim", NVIDIA_NIM_MODEL, started, ok=False, err=str(exc))
+                logger.warning("NVIDIA NIM failed: %s", exc)
     else:
         logger.warning("NVIDIA_NIM_API_KEY not set; skipping NVIDIA NIM")
 
@@ -396,10 +430,15 @@ def chat_completion(
                 ordered.append(candidate)
 
         for candidate in ordered:
+            try:
+                attempt_timeout = _slice(90.0)
+            except TimeoutError:
+                logger.warning("OpenCode Zen skipped: shared deadline exhausted before model %s", candidate)
+                break
             started = time.monotonic()
             try:
                 logger.info("Falling back to OpenCode Zen model: %s", candidate)
-                resp = _call_opencode_zen(candidate, messages, tools, timeout=effective_timeout)
+                resp = _call_opencode_zen(candidate, messages, tools, timeout=attempt_timeout)
                 _log_attempt("opencode_zen", candidate, started, ok=True)
                 return resp
             except Exception as exc:
@@ -417,6 +456,10 @@ def chat_completion(
     else:
         logger.warning("OPENCODE_API_KEY not set; skipping OpenCode Zen")
 
+    if isinstance(last_err, TimeoutError) or (
+        last_err is None and deadline is not None and time.monotonic() >= deadline
+    ):
+        raise TimeoutError("chat_completion shared deadline exhausted")
     raise last_err or RuntimeError(
         "All configured LLM providers failed (OpenRouter, NVIDIA NIM, OpenCode Zen)"
     )

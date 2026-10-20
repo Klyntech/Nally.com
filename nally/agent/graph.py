@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.messages import (
@@ -156,8 +157,17 @@ def llm_node(state: AgentState) -> dict:
         }
 
     remaining = _remaining_wall_time(state)
-    # Leave a small safety margin so the HTTP client does not outlive the budget.
-    request_timeout = max(1.0, remaining - 1.0)
+    # Do not start an LLM call when almost no budget remains.
+    if remaining <= 0.5:
+        reason = f"max_wall_time={MAX_WALL_TIME}s"
+        logger.info("Budget too low for LLM call remaining=%.2fs", remaining)
+        return {
+            "messages": [AIMessage(content=_partial_stop_message(state, reason))],
+            "stop_reason": reason,
+            "iteration": state["iteration"] + 1,
+        }
+    # Shared deadline for the entire provider-fallback chain; small margin for overhead.
+    request_timeout = max(0.25, remaining - 0.25)
     logger.info(
         "llm_node iteration=%s tool_calls=%s remaining_wall_s=%.2f request_timeout_s=%.2f",
         state["iteration"],
@@ -255,13 +265,32 @@ def tools_node(state: AgentState) -> dict:
                 ProgressEvent(kind="tool_end", tool=name, detail=detail, status="error")
             )
             continue
+        # Bound the tool runtime by remaining wall budget (shared across tools in this step).
+        tool_timeout = max(0.25, _remaining_wall_time(state) - 0.25)
         started = time.monotonic()
+        status: Literal["ok", "error"] = "ok"
         try:
-            with memory_session(state["session_id"]):
-                result = tool.invoke(tc["args"])
-            status: Literal["ok", "error"] = "ok"
+            def _invoke():
+                with memory_session(state["session_id"]):
+                    return tool.invoke(tc["args"])
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_invoke)
+                result = future.result(timeout=tool_timeout)
             if isinstance(result, str) and result.startswith("Error:"):
                 status = "error"
+        except FuturesTimeout:
+            logger.warning(
+                "Tool timed out name=%s timeout_s=%.2f remaining_wall_s=%.2f",
+                name,
+                tool_timeout,
+                _remaining_wall_time(state),
+            )
+            result = (
+                f"Error: tool '{name}' exceeded remaining time budget "
+                f"({tool_timeout:.1f}s)"
+            )
+            status = "error"
         except Exception as e:
             logger.exception("Tool failed: %s", name)
             result = f"Error: {e}"
@@ -278,6 +307,15 @@ def tools_node(state: AgentState) -> dict:
         emit_progress(
             ProgressEvent(kind="tool_end", tool=name, detail=detail, status=status)
         )
+        # Stop the tool loop early if the budget is gone after this call.
+        if _remaining_wall_time(state) <= 0.5:
+            reason = f"max_wall_time={MAX_WALL_TIME}s"
+            logger.info("Budget exhausted after tool %s", name)
+            return {
+                "messages": outputs + [AIMessage(content=_partial_stop_message(state, reason))],
+                "tool_calls": count,
+                "stop_reason": reason,
+            }
 
     return {"messages": outputs, "tool_calls": count}
 
