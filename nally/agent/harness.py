@@ -96,13 +96,17 @@ _MULTI_STEP_RE = re.compile(
 
 _MODE_GUIDANCE: dict[TaskMode, str] = {
     "general": (
-        "Answer the actual request directly when it is well-supported. Do not call tools "
-        "or expand the task unless they materially improve the answer."
+        "Answer the actual request directly and concisely. Prefer a short correct answer "
+        "over process commentary. Do not call tools or expand the task unless they "
+        "materially improve the answer."
     ),
     "research": (
-        "Treat this as research: identify the key subquestions, search relevant sources, "
-        "cross-check material claims, cite the evidence, and distinguish facts from "
-        "uncertainty. Do not treat one failed search as proof that no answer exists."
+        "Treat this as research with a hard preference for source-backed claims. "
+        "Search for primary or official sources first; support material claims with "
+        "citations or clear source names; mark uncertainty explicitly when evidence is "
+        "thin or conflicting. Prefer fewer high-quality sources over many weak ones. "
+        "Do not treat one failed search as proof that no answer exists. Stop once the "
+        "key questions are adequately answered—do not keep searching for completeness theater."
     ),
     "document_analysis": (
         "Ground document-specific claims in retrieved passages. Search focused subtopics "
@@ -120,8 +124,11 @@ _MODE_GUIDANCE: dict[TaskMode, str] = {
         "against the user's explicit constraints."
     ),
     "planning": (
-        "Make the desired outcome and constraints explicit. Prioritize feasible steps, "
-        "dependencies, risks, and trade-offs; do not turn the plan into unnecessary ceremony."
+        "Produce a concise, usable plan. Lead with the outcome and hard constraints, then "
+        "list only the necessary steps with dependencies and success criteria. Prefer "
+        "bullets over long prose. Cap elaboration: if a detail does not change a decision "
+        "or risk, omit it. Do not invent milestones, ceremonies, or optional phases the "
+        "user did not ask for."
     ),
     "execution": (
         "Make scoped changes using only permitted tools. Verify the intended outcome with "
@@ -129,9 +136,10 @@ _MODE_GUIDANCE: dict[TaskMode, str] = {
         "because a command or patch merely completed."
     ),
     "problem_solving": (
-        "Diagnose before acting. Separate evidence from hypotheses, prefer the smallest "
-        "safe intervention that addresses the likely cause, then verify the original "
-        "success condition and avoid unrelated changes."
+        "Diagnose before acting. State the most likely cause in one or two sentences, "
+        "propose the smallest safe fix, and say how to verify it. Prefer a concrete "
+        "corrected snippet or command over a long post-mortem. Avoid unrelated refactors "
+        "and do not expand into a general tutorial unless asked."
     ),
 }
 

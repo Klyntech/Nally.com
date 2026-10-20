@@ -64,3 +64,27 @@ def test_harness_flag_rejects_other_values(monkeypatch) -> None:
     for value in ("0", "false", "off", "maybe"):
         monkeypatch.setenv("NALLY_HARNESS_ENABLED", value)
         assert not harness_enabled()
+
+
+def test_research_guidance_requires_sources_and_uncertainty():
+    g = build_harness_guidance("Research current CAPTA requirements and cite sources")
+    assert "Selected task mode: research." in g
+    low = g.lower()
+    assert "source" in low or "citation" in low
+    assert "uncertain" in low
+
+
+def test_planning_guidance_prefers_concise_steps():
+    g = build_harness_guidance("Plan a 3-day itinerary for Lagos with safety constraints")
+    assert "Selected task mode: planning." in g
+    low = g.lower()
+    assert "concise" in low or "bullet" in low
+    assert "omit" in low or "ceremony" in low or "elaborat" in low
+
+
+def test_problem_solving_guidance_prefers_smallest_fix():
+    g = build_harness_guidance("Debug why my Python sum loop prints the wrong value")
+    assert "Selected task mode: problem_solving." in g
+    low = g.lower()
+    assert "smallest" in low or "likely cause" in low
+    assert "verify" in low
