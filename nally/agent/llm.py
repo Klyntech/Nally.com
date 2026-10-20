@@ -122,13 +122,24 @@ def _msg_id() -> str:
     return "msg_" + secrets.token_hex(12)
 
 
-def _openrouter_client() -> OpenAI | None:
+def _openrouter_client(timeout: float = 60.0) -> OpenAI | None:
     if not OPENROUTER_API_KEY:
         return None
-    return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY, timeout=60.0)
+    # Bound client timeout; caller may pass a tighter remaining-budget value.
+    return OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=OPENROUTER_API_KEY,
+        timeout=max(1.0, min(float(timeout), 60.0)),
+    )
 
 
-def _call_openrouter(client: OpenAI, model: str, messages: list, tools: list | None):
+def _call_openrouter(
+    client: OpenAI,
+    model: str,
+    messages: list,
+    tools: list | None,
+    timeout: float | None = None,
+):
     kwargs: dict = {
         "model": model,
         "messages": messages,
@@ -141,6 +152,9 @@ def _call_openrouter(client: OpenAI, model: str, messages: list, tools: list | N
     m = model.lower()
     if any(x in m for x in ("lightning", "reasoning", "nemotron-3.5")):
         kwargs["extra_body"] = {"reasoning": {"enabled": bool(OPENROUTER_REASONING)}}
+    if timeout is not None:
+        # openai client also accepts per-request timeout
+        kwargs["timeout"] = max(1.0, float(timeout))
     return client.chat.completions.create(**kwargs)
 
 
@@ -155,7 +169,12 @@ def _merge_zen_tools(tools: list | None) -> list:
     return out
 
 
-def _call_opencode_zen(model: str, messages: list, tools: list | None):
+def _call_opencode_zen(
+    model: str,
+    messages: list,
+    tools: list | None,
+    timeout: float | None = None,
+):
     """Zen free tier: stream=true + opencode headers + required tools; aggregate SSE."""
     if not OPENCODE_API_KEY:
         raise RuntimeError("OPENCODE_API_KEY not set")
@@ -184,8 +203,10 @@ def _call_opencode_zen(model: str, messages: list, tools: list | None):
 
     content_parts: list[str] = []
     tool_acc: dict[int, dict] = {}
+    # Cap at 90s historical default; caller may tighten to remaining wall budget.
+    request_timeout = max(1.0, min(float(timeout) if timeout is not None else 90.0, 90.0))
 
-    with httpx.Client(timeout=90.0) as client:
+    with httpx.Client(timeout=request_timeout) as client:
         with client.stream("POST", url, headers=headers, json=body) as resp:
             if resp.status_code >= 400:
                 text = resp.read().decode(errors="replace")
@@ -244,15 +265,21 @@ def _call_opencode_zen(model: str, messages: list, tools: list | None):
     return SimpleNamespace(choices=[choice], model=model)
 
 
-def _call_nvidia_nim(messages: list, tools: list | None, model: str | None = None):
+def _call_nvidia_nim(
+    messages: list,
+    tools: list | None,
+    model: str | None = None,
+    timeout: float | None = None,
+):
     """Call NVIDIA NIM through its OpenAI-compatible hosted endpoint."""
     if not NVIDIA_NIM_API_KEY:
         raise RuntimeError("NVIDIA_NIM_API_KEY not set")
 
+    request_timeout = max(1.0, min(float(timeout) if timeout is not None else 60.0, 60.0))
     client = OpenAI(
         base_url=NVIDIA_NIM_BASE_URL,
         api_key=NVIDIA_NIM_API_KEY,
-        timeout=60.0,
+        timeout=request_timeout,
     )
     kwargs: dict = {
         "model": model or NVIDIA_NIM_MODEL,
@@ -266,13 +293,44 @@ def _call_nvidia_nim(messages: list, tools: list | None, model: str | None = Non
     return client.chat.completions.create(**kwargs)
 
 
-def chat_completion(messages: list, tools: list | None = None, model: str | None = None):
-    """Try OpenRouter, then the known-good NVIDIA NIM fallback, then OpenCode Zen."""
+def chat_completion(
+    messages: list,
+    tools: list | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+):
+    """Try OpenRouter, then the known-good NVIDIA NIM fallback, then OpenCode Zen.
+
+    ``timeout`` is an optional remaining-budget bound (seconds). When provided,
+    each provider request is limited to that value (capped by the provider's
+    historical default). Per-operation duration and outcome are logged without
+    secrets or prompt contents.
+    """
     primary_model = model or MODEL
     last_err: BaseException | None = None
+    # Hard floor so we never pass a zero/negative timeout to the HTTP client.
+    effective_timeout = max(1.0, float(timeout)) if timeout is not None else None
+
+    def _log_attempt(provider: str, selected_model: str, started: float, ok: bool, err: str = ""):
+        elapsed = time.monotonic() - started
+        if ok:
+            logger.info(
+                "llm_request provider=%s model=%s duration_s=%.2f status=ok",
+                provider,
+                selected_model,
+                elapsed,
+            )
+        else:
+            logger.warning(
+                "llm_request provider=%s model=%s duration_s=%.2f status=error error=%s",
+                provider,
+                selected_model,
+                elapsed,
+                (err or "unknown")[:200],
+            )
 
     # 1) OpenRouter. Skip the rest of this provider on account-wide failures.
-    or_client = _openrouter_client()
+    or_client = _openrouter_client(timeout=effective_timeout or 60.0)
     if or_client is not None:
         tried: set[str] = set()
         candidates = [primary_model] + [m for m in FALLBACK_MODELS if m != primary_model]
@@ -280,13 +338,18 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
             if candidate in tried:
                 continue
             tried.add(candidate)
+            started = time.monotonic()
             try:
-                resp = _call_openrouter(or_client, candidate, messages, tools)
+                resp = _call_openrouter(
+                    or_client, candidate, messages, tools, timeout=effective_timeout
+                )
+                _log_attempt("openrouter", candidate, started, ok=True)
                 if candidate != primary_model:
                     logger.info("OpenRouter fallback model ok: %s", candidate)
                 return resp
             except Exception as exc:
                 last_err = exc
+                _log_attempt("openrouter", candidate, started, ok=False, err=str(exc))
                 scope = _failure_scope(exc)
                 logger.warning(
                     "OpenRouter model %s failed (scope=%s): %s",
@@ -302,11 +365,15 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
     # 2) NVIDIA NIM has been observed healthy in production logs. Try it before
     # spending time cycling through Zen models that may be disabled or unfunded.
     if NVIDIA_NIM_API_KEY:
+        started = time.monotonic()
         try:
             logger.info("Falling back to NVIDIA NIM model: %s", NVIDIA_NIM_MODEL)
-            return _call_nvidia_nim(messages, tools)
+            resp = _call_nvidia_nim(messages, tools, timeout=effective_timeout)
+            _log_attempt("nvidia_nim", NVIDIA_NIM_MODEL, started, ok=True)
+            return resp
         except Exception as exc:
             last_err = exc
+            _log_attempt("nvidia_nim", NVIDIA_NIM_MODEL, started, ok=False, err=str(exc))
             logger.warning("NVIDIA NIM failed: %s", exc)
     else:
         logger.warning("NVIDIA_NIM_API_KEY not set; skipping NVIDIA NIM")
@@ -329,11 +396,15 @@ def chat_completion(messages: list, tools: list | None = None, model: str | None
                 ordered.append(candidate)
 
         for candidate in ordered:
+            started = time.monotonic()
             try:
                 logger.info("Falling back to OpenCode Zen model: %s", candidate)
-                return _call_opencode_zen(candidate, messages, tools)
+                resp = _call_opencode_zen(candidate, messages, tools, timeout=effective_timeout)
+                _log_attempt("opencode_zen", candidate, started, ok=True)
+                return resp
             except Exception as exc:
                 last_err = exc
+                _log_attempt("opencode_zen", candidate, started, ok=False, err=str(exc))
                 scope = _failure_scope(exc)
                 logger.warning(
                     "OpenCode Zen model %s failed (scope=%s): %s",

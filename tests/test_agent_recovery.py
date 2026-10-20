@@ -34,7 +34,7 @@ def test_agent_continues_after_tool_failure(monkeypatch) -> None:
     ]
     calls = []
 
-    def fake_completion(messages, tools=None, model=None):
+    def fake_completion(messages, tools=None, model=None, timeout=None):
         calls.append(messages)
         return responses.pop(0)
 

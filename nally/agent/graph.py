@@ -97,6 +97,11 @@ def _messages_to_openai(messages: list[BaseMessage]) -> list[dict]:
     return result
 
 
+def _remaining_wall_time(state: AgentState) -> float:
+    """Seconds left in the overall wall-time budget (may be negative if already over)."""
+    return MAX_WALL_TIME - (time.time() - state["started_at"])
+
+
 def _over_budget(state: AgentState) -> str | None:
     if state["iteration"] >= MAX_ITERATIONS:
         return f"max_iterations={MAX_ITERATIONS}"
@@ -107,20 +112,75 @@ def _over_budget(state: AgentState) -> str | None:
     return None
 
 
+def _partial_stop_message(state: AgentState, reason: str) -> str:
+    """Build a clear incomplete-result message instead of a bare intermediate status."""
+    useful: list[str] = []
+    for m in reversed(state.get("messages") or []):
+        if isinstance(m, AIMessage) and (m.content or "").strip():
+            content = (m.content or "").strip()
+            # Skip pure status / planning fragments.
+            if content.startswith("[stopped:") or content.startswith("Let me "):
+                continue
+            if len(content) >= 40:
+                useful.append(content)
+                break
+        if isinstance(m, ToolMessage) and (m.content or "").strip():
+            useful.append(
+                f"(Tool results were retrieved for {m.name or 'a tool'} before the budget ended.)"
+            )
+            break
+
+    header = (
+        f"I could not fully complete this request within the time budget "
+        f"({reason}). Here is the best partial result so far:\n\n"
+    )
+    if useful:
+        return header + useful[0]
+    return (
+        f"I could not complete this request within the time budget ({reason}). "
+        "Please try a narrower question or retry later."
+    )
+
+
 def llm_node(state: AgentState) -> dict:
     if reason := _over_budget(state):
-        logger.info("Budget stop before LLM: %s", reason)
+        logger.info(
+            "Budget stop before LLM: %s remaining=%.2fs",
+            reason,
+            _remaining_wall_time(state),
+        )
         return {
-            "messages": [AIMessage(content=f"[stopped: {reason}]")],
+            "messages": [AIMessage(content=_partial_stop_message(state, reason))],
             "stop_reason": reason,
             "iteration": state["iteration"] + 1,
         }
+
+    remaining = _remaining_wall_time(state)
+    # Leave a small safety margin so the HTTP client does not outlive the budget.
+    request_timeout = max(1.0, remaining - 1.0)
+    logger.info(
+        "llm_node iteration=%s tool_calls=%s remaining_wall_s=%.2f request_timeout_s=%.2f",
+        state["iteration"],
+        state["tool_calls"],
+        remaining,
+        request_timeout,
+    )
 
     emit_progress(ProgressEvent(kind="thinking", detail="planning"))
     tools = get_tools()
     oai_tools = _lc_tools_to_openai(tools)
     oai_msgs = _messages_to_openai(state["messages"])
-    resp = chat_completion(oai_msgs, tools=oai_tools)
+    try:
+        resp = chat_completion(oai_msgs, tools=oai_tools, timeout=request_timeout)
+    except Exception as exc:
+        # Treat a timed-out or failed model call as budget pressure; surface a partial.
+        logger.warning("LLM request failed under remaining budget: %s", exc)
+        reason = f"llm_request_failed remaining={remaining:.1f}s"
+        return {
+            "messages": [AIMessage(content=_partial_stop_message(state, reason))],
+            "stop_reason": reason,
+            "iteration": state["iteration"] + 1,
+        }
     msg = resp.choices[0].message
 
     tool_calls = []
@@ -139,8 +199,13 @@ def llm_node(state: AgentState) -> dict:
 
 def tools_node(state: AgentState) -> dict:
     if reason := _over_budget(state):
+        logger.info(
+            "Budget stop before tools: %s remaining=%.2fs",
+            reason,
+            _remaining_wall_time(state),
+        )
         return {
-            "messages": [AIMessage(content=f"[stopped: {reason}]")],
+            "messages": [AIMessage(content=_partial_stop_message(state, reason))],
             "stop_reason": reason,
         }
 
@@ -159,6 +224,22 @@ def tools_node(state: AgentState) -> dict:
                 )
             )
             continue
+        remaining = _remaining_wall_time(state)
+        if remaining <= 0.5:
+            reason = f"max_wall_time={MAX_WALL_TIME}s"
+            logger.info("Budget exhausted before tool %s remaining=%.2fs", tc.get("name"), remaining)
+            outputs.append(
+                ToolMessage(
+                    content=f"Error: time budget exhausted before tool execution ({reason})",
+                    tool_call_id=tc["id"],
+                    name=tc["name"],
+                )
+            )
+            return {
+                "messages": outputs + [AIMessage(content=_partial_stop_message(state, reason))],
+                "tool_calls": count,
+                "stop_reason": reason,
+            }
         name = tc["name"]
         args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
         detail = format_tool_detail(name, args)
@@ -174,6 +255,7 @@ def tools_node(state: AgentState) -> dict:
                 ProgressEvent(kind="tool_end", tool=name, detail=detail, status="error")
             )
             continue
+        started = time.monotonic()
         try:
             with memory_session(state["session_id"]):
                 result = tool.invoke(tc["args"])
@@ -184,6 +266,14 @@ def tools_node(state: AgentState) -> dict:
             logger.exception("Tool failed: %s", name)
             result = f"Error: {e}"
             status = "error"
+        elapsed = time.monotonic() - started
+        logger.info(
+            "tool_call name=%s duration_s=%.2f status=%s remaining_wall_s=%.2f",
+            name,
+            elapsed,
+            status,
+            _remaining_wall_time(state),
+        )
         outputs.append(ToolMessage(content=str(result), tool_call_id=tc["id"], name=name))
         emit_progress(
             ProgressEvent(kind="tool_end", tool=name, detail=detail, status=status)
@@ -360,6 +450,7 @@ def run_agent(
 
 def _run_agent_inner(user_text: str, stable_session_id: str) -> str:
     query = _direct_search_query(user_text)
+    # Direct-search shortcut is disabled when Harness is on (matches experiment design).
     if query and not harness_enabled():
         started = time.monotonic()
         logger.info("direct web search started query=%r max_results=4", query[:160])
@@ -405,8 +496,8 @@ def _run_agent_inner(user_text: str, stable_session_id: str) -> str:
     if harness_enabled():
         guidance = build_harness_guidance(user_text)
         messages.append(SystemMessage(content=guidance))
-        profile = guidance.splitlines()[1] if len(guidance.splitlines()) > 1 else "unknown"
-        logger.info("Harness enabled: %s", profile)
+        profile_line = guidance.splitlines()[1] if len(guidance.splitlines()) > 1 else "unknown"
+        logger.info("Harness enabled: %s", profile_line)
     memory_context = _load_memory_context(stable_session_id, query=user_text)
     if memory_context:
         messages.append(SystemMessage(content=memory_context))
